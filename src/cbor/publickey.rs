@@ -4,9 +4,10 @@ use crate::publickey::{EcKind, Kind, PublicKey};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use coset::cbor::value::Value;
 use coset::iana::{self, EnumI64};
-use coset::{Algorithm, CoseKey, CoseKeyBuilder, KeyOperation, KeyType, Label};
+use coset::{Algorithm, CoseKey, CoseKeyBuilder, CoseSign1, KeyOperation, KeyType, Label};
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::ec::{EcGroup, EcKey};
+use openssl::ecdsa::EcdsaSig;
 use openssl::nid::Nid;
 use openssl::pkey::{Id, PKey, Public};
 
@@ -23,12 +24,21 @@ impl PublicKey {
         pkey.try_into().context("Making PublicKey from PKey")
     }
 
-    pub(super) fn iana_algorithm(&self) -> iana::Algorithm {
-        match self.kind() {
-            Kind::Ed25519 => iana::Algorithm::EdDSA,
-            Kind::Ec(EcKind::P256) => iana::Algorithm::ES256,
-            Kind::Ec(EcKind::P384) => iana::Algorithm::ES384,
-        }
+    /// Verifies a COSE_Sign1 signature over its message. This function handles the conversion of
+    /// the signature format that is needed for some algorithms.
+    pub(in crate::cbor) fn verify_cose_sign1(&self, sign1: &CoseSign1) -> Result<()> {
+        ensure!(sign1.protected.header.crit.is_empty(), "No critical headers allowed");
+        ensure!(
+            sign1.protected.header.alg == Some(Algorithm::Assigned(iana_algorithm(self.kind()))),
+            "Algorithm mistmatch in protected header"
+        );
+        sign1.verify_signature(b"", |signature, message| match self.kind() {
+            Kind::Ec(k) => {
+                let der = ec_cose_signature_to_der(k, signature).context("Signature to DER")?;
+                self.verify(&der, message)
+            }
+            _ => self.verify(signature, message),
+        })
     }
 
     /// Convert the public key into a [`CoseKey`].
@@ -58,7 +68,10 @@ impl PublicKey {
                 CoseKeyBuilder::new_ec2_pub_key(crv, x.to_vec(), y.to_vec())
             }
         };
-        Ok(builder.algorithm(self.iana_algorithm()).add_key_op(iana::KeyOperation::Verify).build())
+        Ok(builder
+            .algorithm(iana_algorithm(self.kind()))
+            .add_key_op(iana::KeyOperation::Verify)
+            .build())
     }
 }
 
@@ -118,10 +131,85 @@ fn get_label_value_as_bytes(key: &CoseKey, label: Label) -> Result<&[u8]> {
         .map(Vec::as_slice)
 }
 
+fn ec_cose_signature_to_der(kind: EcKind, signature: &[u8]) -> Result<Vec<u8>> {
+    let coord_len = match kind {
+        EcKind::P256 => 32,
+        EcKind::P384 => 48,
+    };
+    ensure!(signature.len() == coord_len * 2, "Unexpected signature length");
+    let r = BigNum::from_slice(&signature[..coord_len]).context("Creating BigNum for r")?;
+    let s = BigNum::from_slice(&signature[coord_len..]).context("Creating BigNum for s")?;
+    let signature = EcdsaSig::from_private_components(r, s).context("Creating ECDSA signature")?;
+    signature.to_der().context("Failed to DER encode signature")
+}
+
+fn iana_algorithm(kind: Kind) -> iana::Algorithm {
+    match kind {
+        Kind::Ed25519 => iana::Algorithm::EdDSA,
+        Kind::Ec(EcKind::P256) => iana::Algorithm::ES256,
+        Kind::Ec(EcKind::P384) => iana::Algorithm::ES384,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM};
+    use coset::{CoseSign1Builder, HeaderBuilder};
+
+    #[test]
+    fn verify_cose_sign1() {
+        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+        let sign1 = CoseSign1Builder::new()
+            .protected(HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA).build())
+            .payload(b"the message".to_vec())
+            .create_signature(b"", |m| key.sign(m).unwrap())
+            .build();
+        key.public_key().verify_cose_sign1(&sign1).unwrap();
+    }
+
+    #[test]
+    fn verify_cose_sign1_fails_with_wrong_algorithm() {
+        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+        let sign1 = CoseSign1Builder::new()
+            .protected(HeaderBuilder::new().algorithm(iana::Algorithm::ES256).build())
+            .payload(b"the message".to_vec())
+            .create_signature(b"", |m| key.sign(m).unwrap())
+            .build();
+        key.public_key().verify_cose_sign1(&sign1).unwrap_err();
+    }
+
+    #[test]
+    fn verify_cose_sign1_with_non_crit_header() {
+        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+        let sign1 = CoseSign1Builder::new()
+            .protected(
+                HeaderBuilder::new()
+                    .algorithm(iana::Algorithm::EdDSA)
+                    .value(1000, Value::from(2000))
+                    .build(),
+            )
+            .payload(b"the message".to_vec())
+            .create_signature(b"", |m| key.sign(m).unwrap())
+            .build();
+        key.public_key().verify_cose_sign1(&sign1).unwrap()
+    }
+
+    #[test]
+    fn verify_cose_sign1_fails_with_crit_header() {
+        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+        let sign1 = CoseSign1Builder::new()
+            .protected(
+                HeaderBuilder::new()
+                    .algorithm(iana::Algorithm::EdDSA)
+                    .add_critical(iana::HeaderParameter::Alg)
+                    .build(),
+            )
+            .payload(b"the message".to_vec())
+            .create_signature(b"", |m| key.sign(m).unwrap())
+            .build();
+        key.public_key().verify_cose_sign1(&sign1).unwrap_err();
+    }
 
     #[test]
     fn to_and_from_okp_cose_key() {

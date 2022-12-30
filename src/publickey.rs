@@ -1,8 +1,6 @@
 //! This module describes a public key that is restricted to one of the supported algorithms.
 
 use anyhow::{ensure, Context, Result};
-use openssl::bn::BigNum;
-use openssl::ecdsa::EcdsaSig;
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{HasParams, Id, PKey, PKeyRef, Public};
@@ -40,42 +38,16 @@ impl PublicKey {
         &self.pkey
     }
 
-    fn verify_ed25519(&self, signature: &[u8], message: &[u8]) -> Result<bool> {
-        ensure!(signature.len() == 64, "Wrong signature length: {:?}", signature.len());
-        let mut verifier =
-            Verifier::new_without_digest(&self.pkey).context("Failed to create verifier")?;
-        verifier.verify_oneshot(signature, message).context("Failed to verify signature")
-    }
-
-    fn verify_ec(&self, ec: EcKind, signature: &[u8], message: &[u8]) -> Result<bool> {
-        let (coord_len, digest) = match ec {
-            EcKind::P256 => (32, MessageDigest::sha256()),
-            EcKind::P384 => (48, MessageDigest::sha384()),
-        };
-        let sig_len = coord_len * 2;
-        ensure!(signature.len() == sig_len, "Unexpected signature length: {:?}", signature.len());
-        // Convert the signature from raw to DER format.
-        let (r, s) = signature.split_at(coord_len);
-        let r = BigNum::from_slice(r).context("Failed to create BigNum for r")?;
-        let s = BigNum::from_slice(s).context("Failed to create BigNum for s")?;
-        let signature =
-            EcdsaSig::from_private_components(r, s).context("Failed to create ECDSA signature")?;
-        let signature = signature.to_der().context("Failed to DER encode signature")?;
-        // Verify the signature against the message.
-        let mut verifier =
-            Verifier::new(digest, &self.pkey).context("Failed to create verifier")?;
-        verifier.verify_oneshot(&signature, message).context("Failed to verify signature")
-    }
-
     /// Verify that the signature obtained from signing the given message
     /// with the PublicKey matches the signature provided.
     pub fn verify(&self, signature: &[u8], message: &[u8]) -> Result<()> {
-        let verified = match self.kind {
-            Kind::Ed25519 => self.verify_ed25519(signature, message)?,
-            Kind::Ec(ec) => self
-                .verify_ec(ec, signature, message)
-                .with_context(|| format!("Failed to verify EC {:?} signature", ec))?,
-        };
+        let mut verifier = match self.kind {
+            Kind::Ed25519 => Verifier::new_without_digest(&self.pkey),
+            Kind::Ec(ec) => Verifier::new(digest_for_ec(ec), &self.pkey),
+        }
+        .with_context(|| format!("Failed to create verifier {:?}", self.kind))?;
+        let verified =
+            verifier.verify_oneshot(signature, message).context("Failed to verify signature")?;
         ensure!(verified, "Signature verification failed.");
         Ok(())
     }
@@ -116,6 +88,13 @@ fn pkey_kind<T: HasParams>(pkey: &PKeyRef<T>) -> Option<Kind> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn digest_for_ec(ec: EcKind) -> MessageDigest {
+    match ec {
+        EcKind::P256 => MessageDigest::sha256(),
+        EcKind::P384 => MessageDigest::sha384(),
     }
 }
 
@@ -166,20 +145,30 @@ mod tests {
 pub(crate) mod testkeys {
     use super::*;
     use openssl::pkey::Private;
+    use openssl::sign::Signer;
 
     pub struct PrivateKey {
+        kind: Kind,
         pkey: PKey<Private>,
     }
 
     impl PrivateKey {
         pub fn from_pem(pem: &str) -> Self {
             let pkey = PKey::private_key_from_pem(pem.as_bytes()).unwrap();
-            pkey_kind(&pkey).expect("unsupported private key");
-            Self { pkey }
+            let kind = pkey_kind(&pkey).expect("unsupported private key");
+            Self { kind, pkey }
         }
 
         pub fn public_key(&self) -> PublicKey {
             public_from_private(&self.pkey).try_into().unwrap()
+        }
+
+        pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
+            let mut signer = match self.kind {
+                Kind::Ed25519 => Signer::new_without_digest(&self.pkey)?,
+                Kind::Ec(ec) => Signer::new(digest_for_ec(ec), &self.pkey)?,
+            };
+            signer.sign_oneshot_to_vec(message).context("signing message")
         }
     }
 

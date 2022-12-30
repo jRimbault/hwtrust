@@ -2,9 +2,9 @@ use super::field_value::FieldValue;
 use crate::cbor::{cose_error, value_from_bytes};
 use crate::dice::{ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder};
 use crate::publickey::PublicKey;
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use ciborium::value::Value;
-use coset::{Algorithm, AsCborValue, CborSerializable, CoseKey, CoseSign1, Header};
+use coset::{AsCborValue, CborSerializable, CoseKey, CoseSign1};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 
@@ -33,12 +33,7 @@ impl Entry {
         let sign1 = CoseSign1::from_cbor_value(cbor)
             .map_err(cose_error)
             .context("Given CBOR does not appear to be a COSE_sign1")?;
-        let algorithm = Algorithm::Assigned(key.iana_algorithm());
-        check_protected_header(&algorithm, &sign1.protected.header)
-            .context("Validation of bcc entry protected header failed.")?;
-        sign1
-            .verify_signature(b"", |s, m| key.verify(s, m))
-            .context("public key cannot verify cose_sign1 cert")?;
+        key.verify_cose_sign1(&sign1).context("cannot verify COSE_sign1")?;
         match sign1.payload {
             None => bail!("Missing payload"),
             Some(payload) => Ok(Self { payload }),
@@ -48,17 +43,6 @@ impl Entry {
     pub(super) fn payload(&self) -> &[u8] {
         &self.payload
     }
-}
-
-/// Validate the protected header of a bcc entry with respect to the provided
-/// alg (typically originating from the subject public key of the payload).
-fn check_protected_header(alg: &Algorithm, header: &Header) -> Result<()> {
-    ensure!(
-        header.alg.as_ref() == Some(alg),
-        "Protected 'alg' header doesn't have the expected algorithm"
-    );
-    ensure!(header.crit.is_empty(), "No critical header values may be defined in the BCC");
-    Ok(())
 }
 
 impl Payload {
@@ -234,27 +218,4 @@ fn config_desc_from_slice(bytes: &[u8]) -> Result<ConfigDesc> {
         .component_version(component_version.into_optional_i64().context("Component version")?)
         .resettable(resettable.is_null().context("Resettable")?)
         .build())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anyhow::Result;
-    use coset::{iana, Header, Label, RegisteredLabel};
-
-    #[test]
-    fn check_bcc_entry_protected_header() -> Result<()> {
-        let eddsa = coset::Algorithm::Assigned(iana::Algorithm::EdDSA);
-        let header = Header { alg: Some(eddsa.clone()), ..Default::default() };
-        check_protected_header(&eddsa, &header).context("Only alg allowed")?;
-        let header = Header { alg: Some(coset::Algorithm::PrivateUse(1000)), ..Default::default() };
-        assert!(check_protected_header(&eddsa, &header).is_err());
-        let mut header = Header { alg: Some(eddsa.clone()), ..Default::default() };
-        header.rest.push((Label::Int(1000), Value::from(2000u16)));
-        check_protected_header(&eddsa, &header).context("non-crit header allowed")?;
-        let mut header = Header { alg: Some(eddsa.clone()), ..Default::default() };
-        header.crit.push(RegisteredLabel::Assigned(iana::HeaderParameter::CounterSignature));
-        assert!(check_protected_header(&eddsa, &header).is_err());
-        Ok(())
-    }
 }
