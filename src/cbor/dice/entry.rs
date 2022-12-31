@@ -219,3 +219,122 @@ fn config_desc_from_slice(bytes: &[u8]) -> Result<ConfigDesc> {
         .resettable(resettable.is_null().context("Resettable")?)
         .build())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cbor::serialize;
+    use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM};
+    use ciborium::cbor;
+    use coset::CborSerializable;
+    use std::collections::HashMap;
+
+    #[test]
+    fn valid_payload() {
+        payload_from_fields(valid_payload_fields()).unwrap();
+    }
+
+    #[test]
+    fn key_usage_only_key_cert_sign() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x20]));
+        payload_from_fields(fields).unwrap();
+    }
+
+    #[test]
+    fn key_usage_too_long() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x20, 0x30, 0x40]));
+        assert!(payload_from_fields(fields).is_err());
+    }
+
+    #[test]
+    fn key_usage_lacks_key_cert_sign() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x10]));
+        assert!(payload_from_fields(fields).is_err());
+    }
+
+    #[test]
+    fn key_usage_not_just_key_cert_sign() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x21]));
+        assert!(payload_from_fields(fields).is_err());
+    }
+
+    #[test]
+    fn mode_not_configured() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![0]));
+        let payload = payload_from_fields(fields).unwrap();
+        assert_eq!(payload.mode(), DiceMode::NotConfigured);
+    }
+
+    #[test]
+    fn mode_normal() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![1]));
+        let payload = payload_from_fields(fields).unwrap();
+        assert_eq!(payload.mode(), DiceMode::Normal);
+    }
+
+    #[test]
+    fn mode_debug() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![2]));
+        let payload = payload_from_fields(fields).unwrap();
+        assert_eq!(payload.mode(), DiceMode::Debug);
+    }
+
+    #[test]
+    fn mode_recovery() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![3]));
+        let payload = payload_from_fields(fields).unwrap();
+        assert_eq!(payload.mode(), DiceMode::Recovery);
+    }
+
+    #[test]
+    fn mode_invalid_becomes_not_configured() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![4]));
+        let payload = payload_from_fields(fields).unwrap();
+        assert_eq!(payload.mode(), DiceMode::NotConfigured);
+    }
+
+    #[test]
+    fn mode_multiple_bytes() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![0, 1]));
+        assert!(payload_from_fields(fields).is_err());
+    }
+
+    #[test]
+    fn subject_public_key_garbage() {
+        let mut fields = valid_payload_fields();
+        fields.insert(SUBJECT_PUBLIC_KEY, Value::Bytes(vec![17; 64]));
+        assert!(payload_from_fields(fields).is_err());
+    }
+
+    fn valid_payload_fields() -> HashMap<i64, Value> {
+        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]).public_key();
+        let subject_public_key = key.to_cose_key().unwrap().to_vec().unwrap();
+        let config_desc = serialize(cbor!({COMPONENT_NAME => "component name"}).unwrap());
+        HashMap::from([
+            (ISS, Value::from("issuer")),
+            (SUB, Value::from("subject")),
+            (SUBJECT_PUBLIC_KEY, Value::Bytes(subject_public_key)),
+            (KEY_USAGE, Value::Bytes(vec![0x20])),
+            (CODE_HASH, Value::Bytes(vec![1; 64])),
+            (CONFIG_DESC, Value::Bytes(config_desc)),
+            (AUTHORITY_HASH, Value::Bytes(vec![2; 64])),
+            (MODE, Value::Bytes(vec![0])),
+        ])
+    }
+
+    fn payload_from_fields(mut fields: HashMap<i64, Value>) -> Result<Payload> {
+        let value = Value::Map(fields.drain().map(|(k, v)| (Value::from(k), v)).collect());
+        let cbor = serialize(value);
+        Payload::from_cbor(&cbor)
+    }
+}

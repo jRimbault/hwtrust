@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 use thiserror::Error;
 
 /// Enumeration of modes used in the DICE chain payloads.
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub enum DiceMode {
     /// This mode also acts as a catch-all for configurations which do not fit the other modes and
     /// invalid modes.
