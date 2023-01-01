@@ -132,15 +132,19 @@ fn get_label_value_as_bytes(key: &CoseKey, label: Label) -> Result<&[u8]> {
 }
 
 fn ec_cose_signature_to_der(kind: EcKind, signature: &[u8]) -> Result<Vec<u8>> {
-    let coord_len = match kind {
-        EcKind::P256 => 32,
-        EcKind::P384 => 48,
-    };
+    let coord_len = ec_coord_len(kind);
     ensure!(signature.len() == coord_len * 2, "Unexpected signature length");
     let r = BigNum::from_slice(&signature[..coord_len]).context("Creating BigNum for r")?;
     let s = BigNum::from_slice(&signature[coord_len..]).context("Creating BigNum for s")?;
     let signature = EcdsaSig::from_private_components(r, s).context("Creating ECDSA signature")?;
     signature.to_der().context("Failed to DER encode signature")
+}
+
+fn ec_coord_len(kind: EcKind) -> usize {
+    match kind {
+        EcKind::P256 => 32,
+        EcKind::P384 => 48,
+    }
 }
 
 fn iana_algorithm(kind: Kind) -> iana::Algorithm {
@@ -156,6 +160,45 @@ mod tests {
     use super::*;
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM};
     use coset::{CoseSign1Builder, HeaderBuilder};
+
+    impl PrivateKey {
+        pub(in crate::cbor) fn sign_cose_sign1(&self, payload: Vec<u8>) -> CoseSign1 {
+            CoseSign1Builder::new()
+                .protected(HeaderBuilder::new().algorithm(iana_algorithm(self.kind())).build())
+                .payload(payload)
+                .create_signature(b"", |m| {
+                    let signature = self.sign(m).unwrap();
+                    match self.kind() {
+                        Kind::Ec(ec) => ec_der_signature_to_cose(ec, &signature),
+                        _ => signature,
+                    }
+                })
+                .build()
+        }
+    }
+
+    fn ec_der_signature_to_cose(kind: EcKind, signature: &[u8]) -> Vec<u8> {
+        let coord_len = ec_coord_len(kind).try_into().unwrap();
+        let signature = EcdsaSig::from_der(signature).unwrap();
+        let mut r = signature.r().to_vec_padded(coord_len).unwrap();
+        let mut s = signature.s().to_vec_padded(coord_len).unwrap();
+        r.append(&mut s);
+        r
+    }
+
+    #[test]
+    fn sign_and_verify_okp() {
+        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+        let sign1 = key.sign_cose_sign1(b"signed payload".to_vec());
+        key.public_key().verify_cose_sign1(&sign1).unwrap();
+    }
+
+    #[test]
+    fn sign_and_verify_ec2() {
+        let key = PrivateKey::from_pem(P256_KEY_PEM[0]);
+        let sign1 = key.sign_cose_sign1(b"signed payload".to_vec());
+        key.public_key().verify_cose_sign1(&sign1).unwrap();
+    }
 
     #[test]
     fn verify_cose_sign1() {

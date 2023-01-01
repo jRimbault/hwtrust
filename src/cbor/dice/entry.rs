@@ -229,6 +229,68 @@ mod tests {
     use coset::CborSerializable;
     use std::collections::HashMap;
 
+    impl Entry {
+        pub(in super::super) fn from_payload(payload: &Payload) -> Result<Self> {
+            Ok(Self { payload: serialize(payload.to_cbor_value()?) })
+        }
+
+        pub(in super::super) fn sign(self, key: &PrivateKey) -> CoseSign1 {
+            key.sign_cose_sign1(self.payload)
+        }
+    }
+
+    impl Payload {
+        pub(in super::super) fn to_cbor_value(&self) -> Result<Value> {
+            let subject_public_key =
+                self.subject_public_key().to_cose_key()?.to_vec().map_err(cose_error)?;
+            let config_desc = serialize(encode_config_desc(self.config_desc()));
+            let mut map = vec![
+                (Value::from(ISS), Value::from(self.issuer())),
+                (Value::from(SUB), Value::from(self.subject())),
+                (Value::from(SUBJECT_PUBLIC_KEY), Value::from(subject_public_key)),
+                (Value::from(MODE), encode_mode(self.mode())),
+                (Value::from(CODE_HASH), Value::from(self.code_hash())),
+                (Value::from(CONFIG_DESC), Value::from(config_desc)),
+                (Value::from(AUTHORITY_HASH), Value::from(self.authority_hash())),
+                (Value::from(KEY_USAGE), Value::from(vec![0x20])),
+            ];
+            if let Some(code_desc) = self.code_desc() {
+                map.push((Value::from(CODE_DESC), Value::from(code_desc)));
+            }
+            if let Some(config_hash) = self.config_hash() {
+                map.push((Value::from(CONFIG_HASH), Value::from(config_hash)));
+            }
+            if let Some(authority_desc) = self.authority_desc() {
+                map.push((Value::from(AUTHORITY_DESC), Value::from(authority_desc)));
+            }
+            Ok(Value::Map(map))
+        }
+    }
+
+    fn encode_mode(mode: DiceMode) -> Value {
+        let mode = match mode {
+            DiceMode::NotConfigured => 0,
+            DiceMode::Normal => 1,
+            DiceMode::Debug => 2,
+            DiceMode::Recovery => 3,
+        };
+        Value::Bytes(vec![mode])
+    }
+
+    fn encode_config_desc(config_desc: &ConfigDesc) -> Value {
+        let mut map = Vec::new();
+        if let Some(component_name) = config_desc.component_name() {
+            map.push((Value::from(COMPONENT_NAME), Value::from(component_name)));
+        }
+        if let Some(component_version) = config_desc.component_version() {
+            map.push((Value::from(COMPONENT_VERSION), Value::from(component_version)));
+        }
+        if config_desc.resettable() {
+            map.push((Value::from(RESETTABLE), Value::Null));
+        }
+        Value::Map(map)
+    }
+
     #[test]
     fn valid_payload() {
         payload_from_fields(valid_payload_fields()).unwrap();

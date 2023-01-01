@@ -23,7 +23,7 @@ pub(crate) enum EcKind {
 }
 
 /// Struct wrapping the public key and relevant validation methods.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PublicKey {
     kind: Kind,
     pkey: PKey<Public>,
@@ -157,6 +157,10 @@ pub(crate) mod testkeys {
             let pkey = PKey::private_key_from_pem(pem.as_bytes()).unwrap();
             let kind = pkey_kind(&pkey).expect("unsupported private key");
             Self { kind, pkey }
+        }
+
+        pub(crate) fn kind(&self) -> Kind {
+            self.kind
         }
 
         pub fn public_key(&self) -> PublicKey {
