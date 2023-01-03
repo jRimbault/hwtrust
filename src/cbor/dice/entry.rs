@@ -20,6 +20,8 @@ const MODE: i64 = -4670551;
 const SUBJECT_PUBLIC_KEY: i64 = -4670552;
 const KEY_USAGE: i64 = -4670553;
 
+const CONFIG_DESC_RESERVED_MAX: i64 = -70000;
+const CONFIG_DESC_RESERVED_MIN: i64 = -70999;
 const COMPONENT_NAME: i64 = -70002;
 const COMPONENT_VERSION: i64 = -70003;
 const RESETTABLE: i64 = -70004;
@@ -199,6 +201,9 @@ fn config_desc_from_slice(bytes: &[u8]) -> Result<ConfigDesc> {
                     component_version.set(value).context("Error setting component version")?
                 }
                 RESETTABLE => resettable.set(value).context("Error setting resettable")?,
+                key if (CONFIG_DESC_RESERVED_MIN..=CONFIG_DESC_RESERVED_MAX).contains(&key) => {
+                    bail!("Reserved key {}", key);
+                }
                 _ => match extensions.entry(key) {
                     Vacant(entry) => {
                         entry.insert(value);
@@ -376,6 +381,38 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(SUBJECT_PUBLIC_KEY, Value::Bytes(vec![17; 64]));
         assert!(payload_from_fields(fields).is_err());
+    }
+
+    #[test]
+    fn config_desc_custom_field_above() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({-69999 => "custom"}).unwrap());
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        payload_from_fields(fields).unwrap();
+    }
+
+    #[test]
+    fn config_desc_reserved_field_max() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({-70000 => "reserved"}).unwrap());
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        payload_from_fields(fields).unwrap_err();
+    }
+
+    #[test]
+    fn config_desc_reserved_field_min() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({-70999 => "reserved"}).unwrap());
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        payload_from_fields(fields).unwrap_err();
+    }
+
+    #[test]
+    fn config_desc_custom_field_below() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({-71000 => "custom"}).unwrap());
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        payload_from_fields(fields).unwrap();
     }
 
     fn valid_payload_fields() -> HashMap<i64, Value> {
