@@ -1,8 +1,7 @@
 use super::entry::Entry;
-use crate::bcc::entry::Payload;
-use crate::bcc::{Chain, ChainForm, DegenerateChain};
 use crate::cbor::dice::entry::PayloadFields;
 use crate::cbor::{cose_error, value_from_bytes};
+use crate::dice::{Chain, ChainForm, DegenerateChain, Payload};
 use crate::publickey::PublicKey;
 use anyhow::{bail, Context, Result};
 use ciborium::value::Value;
@@ -66,7 +65,7 @@ fn root_and_entries_from_cbor(bytes: &[u8]) -> Result<(PublicKey, std::vec::Into
     let value = value_from_bytes(bytes).context("Unable to decode top-level CBOR")?;
     let array = match value {
         Array(array) if array.len() >= 2 => array,
-        _ => bail!("Invalid BCC. Expected an array of at least length 2, found: {:?}", value),
+        _ => bail!("Expected an array of at least length 2, found: {:?}", value),
     };
     let mut it = array.into_iter();
     let root_public_key = CoseKey::from_cbor_value(it.next().unwrap())
@@ -83,47 +82,47 @@ mod tests {
 
     #[test]
     fn chain_form_valid_proper() {
-        let chain = fs::read("testdata/bcc/valid_ed25519.chain").unwrap();
+        let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
         let form = ChainForm::from_cbor(&chain).unwrap();
         assert!(matches!(form, ChainForm::Proper(_)));
     }
 
     #[test]
     fn chain_form_valid_degenerate() {
-        let chain = fs::read("testdata/bcc/cf_degenerate.chain").unwrap();
+        let chain = fs::read("testdata/dice/cf_degenerate.chain").unwrap();
         let form = ChainForm::from_cbor(&chain).unwrap();
         assert!(matches!(form, ChainForm::Degenerate(_)));
     }
 
     #[test]
     fn check_chain_valid_ed25519() {
-        let chain = fs::read("testdata/bcc/valid_ed25519.chain").unwrap();
+        let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
         let chain = Chain::from_cbor(&chain).unwrap();
         assert_eq!(chain.payloads().len(), 8);
     }
 
     #[test]
     fn check_chain_valid_p256() {
-        let chain = fs::read("testdata/bcc/valid_p256.chain").unwrap();
+        let chain = fs::read("testdata/dice/valid_p256.chain").unwrap();
         let chain = Chain::from_cbor(&chain).unwrap();
         assert_eq!(chain.payloads().len(), 3);
     }
 
     #[test]
     fn check_chain_bad_p256() {
-        let chain = fs::read("testdata/bcc/bad_p256.chain").unwrap();
+        let chain = fs::read("testdata/dice/bad_p256.chain").unwrap();
         assert!(Chain::from_cbor(&chain).is_err());
     }
 
     #[test]
     fn check_chain_bad_pub_key() {
-        let chain = fs::read("testdata/bcc/bad_pub_key.chain").unwrap();
+        let chain = fs::read("testdata/dice/bad_pub_key.chain").unwrap();
         assert!(Chain::from_cbor(&chain).is_err());
     }
 
     #[test]
     fn check_chain_bad_final_signature() {
-        let chain = fs::read("testdata/bcc/bad_final_signature.chain").unwrap();
+        let chain = fs::read("testdata/dice/bad_final_signature.chain").unwrap();
         assert!(Chain::from_cbor(&chain).is_err());
     }
 }

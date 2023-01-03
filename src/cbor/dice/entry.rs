@@ -1,6 +1,6 @@
 use super::field_value::FieldValue;
-use crate::bcc::entry::{ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder};
 use crate::cbor::{cose_error, value_from_bytes};
+use crate::dice::{ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder};
 use crate::publickey::PublicKey;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use ciborium::value::Value;

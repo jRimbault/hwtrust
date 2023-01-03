@@ -1,6 +1,4 @@
-//! This module describes the public key (PubKeyEd25519, PubKeyECDSA256 or
-//! PubKeyECDSA384) used in the BccPayload. The key itself is stored as a
-//! simple byte array in a vector.
+//! This module describes a public key that is restricted to one of the supported algorithms.
 
 use anyhow::{ensure, Context, Result};
 use openssl::bn::BigNum;

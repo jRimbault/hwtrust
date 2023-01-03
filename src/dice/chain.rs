@@ -1,6 +1,4 @@
-//! This module provides a wrapper describing a valid Boot Certificate Chain.
-
-use super::entry::Payload;
+use crate::dice::Payload;
 use crate::publickey::PublicKey;
 use anyhow::Result;
 use std::collections::HashSet;
@@ -15,9 +13,8 @@ pub enum ChainForm {
     Degenerate(DegenerateChain),
 }
 
-/// Represents a full Boot Certificate Chain (BCC). This consists of the root public key (which
-/// signs the first certificate), followed by a chain of BccEntry certificates. Apart from the
-/// first, the issuer of each cert is the subject of the previous one.
+/// Represents a DICE chain. This consists of the root public key (which signs the first
+/// certificate), followed by a chain of certificates.
 #[derive(Debug)]
 pub struct Chain {
     root_public_key: PublicKey,
@@ -169,7 +166,7 @@ impl Display for DegenerateChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bcc::entry::{DiceMode, PayloadBuilder};
+    use crate::dice::{DiceMode, PayloadBuilder};
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM, P384_KEY_PEM};
 
     #[test]

@@ -2,7 +2,7 @@
 //! the libhwtrust Rust library.
 
 use coset::CborSerializable;
-use hwtrust::bcc::ChainForm;
+use hwtrust::dice::ChainForm;
 
 #[cxx::bridge(namespace = "hwtrust::rust")]
 mod ffi {

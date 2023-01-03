@@ -1,6 +1,7 @@
 //! Handling for data represented as CBOR. Cryptographic objects are encoded following COSE.
 
 mod dice;
+mod publickey;
 
 use ciborium::{de::from_reader, value::Value};
 use std::io::Read;

@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use hwtrust::bcc;
+use hwtrust::dice;
 use std::fs;
 
 #[derive(Parser)]
@@ -38,7 +38,7 @@ struct VerifyDiceChainArgs {
 fn main() -> Result<()> {
     let args = Args::parse();
     let Action::VerifyDiceChain(sub_args) = args.action;
-    let chain = bcc::Chain::from_cbor(&fs::read(sub_args.chain)?)?;
+    let chain = dice::Chain::from_cbor(&fs::read(sub_args.chain)?)?;
     println!("Success!");
     if sub_args.dump {
         print!("{}", chain);

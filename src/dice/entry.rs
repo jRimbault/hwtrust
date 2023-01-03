@@ -1,5 +1,3 @@
-//! This module wraps the certificate validation functions intended for BccEntry.
-
 use crate::publickey::PublicKey;
 use std::fmt::{self, Display, Formatter};
 use thiserror::Error;
