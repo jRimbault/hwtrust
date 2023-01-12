@@ -1,0 +1,71 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+rust_defaults {
+    name: "hwtrust_defaults",
+    host_supported: true,
+    rustlibs: [
+        "libanyhow",
+        "libthiserror",
+        "libciborium",
+        "libcoset",
+        "libhex",
+        "libopenssl",
+    ],
+}
+
+rust_library {
+    name: "libhwtrust",
+    defaults: ["hwtrust_defaults"],
+    crate_name: "hwtrust",
+    srcs: ["src/lib.rs"],
+    vendor_available: true,
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.compos",
+        "com.android.virt",
+    ],
+}
+
+filegroup(
+    name = "testdata",
+    srcs = ["testdata/**/*"],
+)
+
+rust_test {
+    name: "libhwtrust_tests",
+    defaults: ["hwtrust_defaults"],
+    srcs: ["src/lib.rs"],
+    data: [":testdata"],
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    compile_multilib: "first",
+    test_options: {
+        unit_test: false,
+    },
+    rustlibs: [
+        "libhwtrust",
+    ],
+}
+
+rust_binary {
+    name: "hwtrust",
+    defaults: ["hwtrust_defaults"],
+    srcs: ["src/main.rs"],
+    rustlibs: [
+        "libclap",
+        "libhwtrust",
+    ],
+}
+
+rust_test {
+    name: "hwtrust.test",
+    defaults: ["hwtrust_defaults"],
+    srcs: ["src/main.rs"],
+    rustlibs: [
+        "libclap",
+        "libhwtrust",
+    ],
+    test_suites: ["general-tests"],
+}

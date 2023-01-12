@@ -1,0 +1,13 @@
+{
+  "presubmit": [
+    {
+      "name": "libhwtrust_tests"
+    },
+    {
+      "name": "VtsHalRemotelyProvisionedComponentTargetTest"
+    },
+    {
+      "name": "ComposHostTestCases"
+    }
+  ]
+}
