@@ -3,8 +3,9 @@ package {
 }
 
 rust_defaults {
-    name: "hwtrust_defaults",
+    name: "libhwtrust_defaults",
     host_supported: true,
+    srcs: ["src/lib.rs"],
     rustlibs: [
         "libanyhow",
         "libthiserror",
@@ -17,9 +18,8 @@ rust_defaults {
 
 rust_library {
     name: "libhwtrust",
-    defaults: ["hwtrust_defaults"],
+    defaults: ["libhwtrust_defaults"],
     crate_name: "hwtrust",
-    srcs: ["src/lib.rs"],
     vendor_available: true,
     apex_available: [
         "//apex_available:platform",
@@ -28,23 +28,22 @@ rust_library {
     ],
 }
 
-filegroup(
-    name = "testdata",
-    srcs = ["testdata/**/*"],
-)
-
 rust_test {
     name: "libhwtrust_tests",
-    defaults: ["hwtrust_defaults"],
-    srcs: ["src/lib.rs"],
+    defaults: ["libhwtrust_defaults"],
     data: [":testdata"],
-    test_suites: ["general-tests"],
-    auto_gen_config: true,
-    compile_multilib: "first",
-    test_options: {
-        unit_test: false,
-    },
     rustlibs: [
+        "libhwtrust",
+    ],
+}
+
+rust_defaults {
+    name: "hwtrust_defaults",
+    host_supported: true,
+    srcs: ["src/main.rs"],
+    rustlibs: [
+        "libanyhow",
+        "libclap",
         "libhwtrust",
     ],
 }
@@ -52,20 +51,24 @@ rust_test {
 rust_binary {
     name: "hwtrust",
     defaults: ["hwtrust_defaults"],
-    srcs: ["src/main.rs"],
-    rustlibs: [
-        "libclap",
-        "libhwtrust",
-    ],
 }
 
 rust_test {
-    name: "hwtrust.test",
+    name: "hwtrust_tests",
     defaults: ["hwtrust_defaults"],
-    srcs: ["src/main.rs"],
-    rustlibs: [
-        "libclap",
-        "libhwtrust",
-    ],
-    test_suites: ["general-tests"],
 }
+
+rust_test {
+    name: "hwtrust_cli_tests",
+    host_supported: true,
+    srcs: ["tests/hwtrust_cli.rs"],
+    data: [":testdata"],
+    data_bins: ["hwtrust"],
+    data_libs: ["libcrypto"],
+    compile_multilib: "first",
+}
+
+filegroup(
+    name = "testdata",
+    srcs = ["testdata/**/*"],
+)

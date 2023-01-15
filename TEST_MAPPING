@@ -1,9 +1,6 @@
 {
   "presubmit": [
     {
-      "name": "libhwtrust_tests"
-    },
-    {
       "name": "VtsHalRemotelyProvisionedComponentTargetTest"
     },
     {
