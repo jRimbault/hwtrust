@@ -148,7 +148,7 @@ impl PayloadBuilder {
             return Err(PayloadBuilderError::SubjectEmpty);
         }
         let used_hash_size = self.0.code_hash.len();
-        if used_hash_size != 32 && used_hash_size != 64 {
+        if ![32, 48, 64].contains(&used_hash_size) {
             return Err(PayloadBuilderError::CodeHashSize);
         }
         if let Some(ref config_hash) = self.0.config_hash {
@@ -322,6 +322,16 @@ mod tests {
     }
 
     #[test]
+    fn payload_builder_valid_384_bit_hashes() {
+        valid_payload()
+            .code_hash(vec![1; 48])
+            .authority_hash(vec![2; 48])
+            .config_hash(Some(vec![3; 48]))
+            .build()
+            .unwrap();
+    }
+
+    #[test]
     fn payload_builder_valid_256_bit_hashes() {
         valid_payload()
             .code_hash(vec![1; 32])
@@ -345,13 +355,13 @@ mod tests {
 
     #[test]
     fn payload_builder_bad_code_hash_size() {
-        let err = valid_payload().code_hash(vec![1; 48]).build().unwrap_err();
+        let err = valid_payload().code_hash(vec![1; 16]).build().unwrap_err();
         assert_eq!(err, PayloadBuilderError::CodeHashSize);
     }
 
     #[test]
     fn payload_builder_bad_authority_hash_size() {
-        let err = valid_payload().authority_hash(vec![1; 48]).build().unwrap_err();
+        let err = valid_payload().authority_hash(vec![1; 16]).build().unwrap_err();
         assert_eq!(err, PayloadBuilderError::AuthorityHashSize);
     }
 
@@ -364,7 +374,7 @@ mod tests {
 
     #[test]
     fn payload_builder_bad_config_hash_size() {
-        let err = valid_payload().config_hash(Some(vec![1; 48])).build().unwrap_err();
+        let err = valid_payload().config_hash(Some(vec![1; 16])).build().unwrap_err();
         assert_eq!(err, PayloadBuilderError::ConfigHashSize);
     }
 
