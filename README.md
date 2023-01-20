@@ -11,8 +11,15 @@ root-of-trust and the features that rely on it is `libhwtrust`.
 ## `hwtrust`
 
 There is a command-line utility that provides easy access to the logic in
-`libhwtrust` called `hwtrust`. Run `hwtrust --help` to see a list of its
-functions.
+`libhwtrust` called `hwtrust`.
+
+Build it as part of Android with `m hwtrust` and run `hwtrust --help` to see a
+list of its functions.
+
+Alternatively, use Cargo by running `cargo run -- --help` in this directory to
+build and run the utility. If the Cargo build has errors, please help to keep it
+working by sending fixes or reporting the problem. Building as part of Android
+should always work as a fallback.
 
 ### Verifying DICE chains
 
