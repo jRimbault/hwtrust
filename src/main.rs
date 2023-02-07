@@ -3,6 +3,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use hwtrust::dice;
+use hwtrust::session::{ConfigFormat, Options, Session};
 use std::fs;
 
 #[derive(Parser)]
@@ -33,12 +34,25 @@ struct VerifyDiceChainArgs {
 
     /// Path to a file containing a DICE chain
     chain: String,
+
+    /// Allow the first DICE chain certificate to contain non-Android configuration fields
+    #[clap(long)]
+    allow_wrong_config_in_first_dice_cert: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let Action::VerifyDiceChain(sub_args) = args.action;
-    let chain = dice::Chain::from_cbor(&fs::read(sub_args.chain)?)?;
+    let session = Session {
+        options: Options {
+            first_dice_chain_cert_config_format: if sub_args.allow_wrong_config_in_first_dice_cert {
+                ConfigFormat::Permissive
+            } else {
+                ConfigFormat::default()
+            },
+        },
+    };
+    let chain = dice::Chain::from_cbor(&session, &fs::read(sub_args.chain)?)?;
     println!("Success!");
     if sub_args.dump {
         print!("{}", chain);

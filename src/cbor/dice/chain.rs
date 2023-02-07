@@ -3,6 +3,7 @@ use crate::cbor::dice::entry::PayloadFields;
 use crate::cbor::{cose_error, value_from_bytes};
 use crate::dice::{Chain, ChainForm, DegenerateChain, Payload};
 use crate::publickey::PublicKey;
+use crate::session::{ConfigFormat, Session};
 use anyhow::{bail, Context, Result};
 use ciborium::value::Value;
 use coset::{cbor::value::Value::Array, AsCborValue, CoseKey};
@@ -10,7 +11,7 @@ use coset::{cbor::value::Value::Array, AsCborValue, CoseKey};
 impl ChainForm {
     /// Decode and validate a CBOR-encoded DICE chain. The form of chain is inferred from the
     /// structure of the data.
-    pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
+    pub fn from_cbor(session: &Session, bytes: &[u8]) -> Result<Self> {
         let (root_public_key, it) = root_and_entries_from_cbor(bytes)?;
 
         if it.len() == 1 {
@@ -20,8 +21,8 @@ impl ChainForm {
             let value = it.as_slice()[0].clone();
             let entry = Entry::verify_cbor_value(value, &root_public_key)
                 .context("parsing degenerate entry")?;
-            let fields =
-                PayloadFields::from_cbor(entry.payload()).context("parsing degenerate payload")?;
+            let fields = PayloadFields::from_cbor(entry.payload(), ConfigFormat::Android)
+                .context("parsing degenerate payload")?;
             let chain =
                 DegenerateChain::new(fields.issuer, fields.subject, fields.subject_public_key)
                     .context("creating DegenerateChain")?;
@@ -30,7 +31,7 @@ impl ChainForm {
             }
         }
 
-        Ok(Self::Proper(Chain::from_root_and_entries(root_public_key, it)?))
+        Ok(Self::Proper(Chain::from_root_and_entries(session, root_public_key, it)?))
     }
 }
 
@@ -40,18 +41,27 @@ impl Chain {
     /// reasonable values. The signature of each certificate is validated and the payload
     /// extracted. This does not perform any semantic validation of the data in the
     /// certificates such as the Authority, Config and Code hashes.
-    pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
+    pub fn from_cbor(session: &Session, bytes: &[u8]) -> Result<Self> {
         let (root_public_key, it) = root_and_entries_from_cbor(bytes)?;
-        Self::from_root_and_entries(root_public_key, it)
+        Self::from_root_and_entries(session, root_public_key, it)
     }
 
-    fn from_root_and_entries(root: PublicKey, values: std::vec::IntoIter<Value>) -> Result<Self> {
+    fn from_root_and_entries(
+        session: &Session,
+        root: PublicKey,
+        values: std::vec::IntoIter<Value>,
+    ) -> Result<Self> {
         let mut payloads = Vec::with_capacity(values.len());
         let mut previous_public_key = &root;
         for (n, value) in values.enumerate() {
             let entry = Entry::verify_cbor_value(value, previous_public_key)
                 .with_context(|| format!("Invalid entry at index {}", n))?;
-            let payload = Payload::from_cbor(entry.payload())
+            let config_format = if n == 0 {
+                session.options.first_dice_chain_cert_config_format
+            } else {
+                ConfigFormat::Android
+            };
+            let payload = Payload::from_cbor(entry.payload(), config_format)
                 .with_context(|| format!("Invalid payload at index {}", n))?;
             payloads.push(payload);
             let previous = payloads.last().unwrap();
@@ -81,52 +91,60 @@ mod tests {
     use crate::cbor::serialize;
     use crate::dice::{DiceMode, PayloadBuilder};
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM, P384_KEY_PEM};
+    use crate::session::Options;
     use std::fs;
 
     #[test]
     fn chain_form_valid_proper() {
         let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
-        let form = ChainForm::from_cbor(&chain).unwrap();
+        let session = Session { options: Options::default() };
+        let form = ChainForm::from_cbor(&session, &chain).unwrap();
         assert!(matches!(form, ChainForm::Proper(_)));
     }
 
     #[test]
     fn chain_form_valid_degenerate() {
         let chain = fs::read("testdata/dice/cf_degenerate.chain").unwrap();
-        let form = ChainForm::from_cbor(&chain).unwrap();
+        let session = Session { options: Options::default() };
+        let form = ChainForm::from_cbor(&session, &chain).unwrap();
         assert!(matches!(form, ChainForm::Degenerate(_)));
     }
 
     #[test]
     fn check_chain_valid_ed25519() {
         let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
-        let chain = Chain::from_cbor(&chain).unwrap();
+        let session = Session { options: Options::default() };
+        let chain = Chain::from_cbor(&session, &chain).unwrap();
         assert_eq!(chain.payloads().len(), 8);
     }
 
     #[test]
     fn check_chain_valid_p256() {
         let chain = fs::read("testdata/dice/valid_p256.chain").unwrap();
-        let chain = Chain::from_cbor(&chain).unwrap();
+        let session = Session { options: Options::default() };
+        let chain = Chain::from_cbor(&session, &chain).unwrap();
         assert_eq!(chain.payloads().len(), 3);
     }
 
     #[test]
     fn check_chain_bad_p256() {
         let chain = fs::read("testdata/dice/bad_p256.chain").unwrap();
-        assert!(Chain::from_cbor(&chain).is_err());
+        let session = Session { options: Options::default() };
+        Chain::from_cbor(&session, &chain).unwrap_err();
     }
 
     #[test]
     fn check_chain_bad_pub_key() {
         let chain = fs::read("testdata/dice/bad_pub_key.chain").unwrap();
-        assert!(Chain::from_cbor(&chain).is_err());
+        let session = Session { options: Options::default() };
+        Chain::from_cbor(&session, &chain).unwrap_err();
     }
 
     #[test]
     fn check_chain_bad_final_signature() {
         let chain = fs::read("testdata/dice/bad_final_signature.chain").unwrap();
-        assert!(Chain::from_cbor(&chain).is_err());
+        let session = Session { options: Options::default() };
+        Chain::from_cbor(&session, &chain).unwrap_err();
     }
 
     #[test]
@@ -139,7 +157,8 @@ mod tests {
             let entry = Entry::from_payload(&valid_payload(n, key)).unwrap();
             entry.sign(&keys[n]).to_cbor_value().unwrap()
         }));
-        Chain::from_cbor(&serialize(Value::Array(chain))).unwrap();
+        let session = Session { options: Options::default() };
+        Chain::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
     }
 
     #[test]
@@ -153,7 +172,8 @@ mod tests {
             let entry = Entry::from_payload(&valid_payload(n, key)).unwrap();
             entry.sign(&keys[n]).to_cbor_value().unwrap()
         }));
-        Chain::from_cbor(&serialize(Value::Array(chain))).unwrap();
+        let session = Session { options: Options::default() };
+        Chain::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
     }
 
     #[test]
@@ -165,7 +185,8 @@ mod tests {
             pub_key.to_cose_key().unwrap().to_cbor_value().unwrap(),
             entry.sign(&key).to_cbor_value().unwrap(),
         ];
-        let form = ChainForm::from_cbor(&serialize(Value::Array(chain))).unwrap();
+        let session = Session { options: Options::default() };
+        let form = ChainForm::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
         assert!(matches!(form, ChainForm::Degenerate(_)));
     }
 
@@ -180,7 +201,8 @@ mod tests {
             root_key.public_key().to_cose_key().unwrap().to_cbor_value().unwrap(),
             entry.sign(&root_key).to_cbor_value().unwrap(),
         ];
-        let form = ChainForm::from_cbor(&serialize(Value::Array(chain))).unwrap();
+        let session = Session { options: Options::default() };
+        let form = ChainForm::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
         assert!(matches!(form, ChainForm::Proper(_)));
     }
 

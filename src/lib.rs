@@ -3,5 +3,6 @@
 
 pub mod dice;
 pub mod publickey;
+pub mod session;
 
 mod cbor;

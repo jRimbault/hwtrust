@@ -3,6 +3,7 @@
 
 use coset::CborSerializable;
 use hwtrust::dice::ChainForm;
+use hwtrust::session::{ConfigFormat, Options, Session};
 
 #[cxx::bridge(namespace = "hwtrust::rust")]
 mod ffi {
@@ -33,7 +34,10 @@ mod ffi {
 pub struct DiceChain(Option<ChainForm>);
 
 fn verify_dice_chain(chain: &[u8]) -> ffi::VerifyDiceChainResult {
-    match ChainForm::from_cbor(chain) {
+    let session = Session {
+        options: Options { first_dice_chain_cert_config_format: ConfigFormat::Permissive },
+    };
+    match ChainForm::from_cbor(&session, chain) {
         Ok(chain) => {
             let len = match chain {
                 ChainForm::Proper(ref chain) => chain.payloads().len(),

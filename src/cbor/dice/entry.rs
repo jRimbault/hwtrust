@@ -2,6 +2,7 @@ use super::field_value::FieldValue;
 use crate::cbor::{cose_error, value_from_bytes};
 use crate::dice::{ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder};
 use crate::publickey::PublicKey;
+use crate::session::ConfigFormat;
 use anyhow::{anyhow, bail, Context, Result};
 use ciborium::value::Value;
 use coset::{AsCborValue, CborSerializable, CoseKey, CoseSign1};
@@ -48,8 +49,8 @@ impl Entry {
 }
 
 impl Payload {
-    pub(super) fn from_cbor(bytes: &[u8]) -> Result<Self> {
-        let f = PayloadFields::from_cbor(bytes)?;
+    pub(super) fn from_cbor(bytes: &[u8], config_format: ConfigFormat) -> Result<Self> {
+        let f = PayloadFields::from_cbor(bytes, config_format)?;
         PayloadBuilder::with_subject_public_key(f.subject_public_key)
             .issuer(f.issuer)
             .subject(f.subject)
@@ -79,7 +80,7 @@ pub(super) struct PayloadFields {
 }
 
 impl PayloadFields {
-    pub(super) fn from_cbor(bytes: &[u8]) -> Result<Self> {
+    pub(super) fn from_cbor(bytes: &[u8], config_format: ConfigFormat) -> Result<Self> {
         let mut issuer = FieldValue::new("issuer");
         let mut subject = FieldValue::new("subject");
         let mut subject_public_key = FieldValue::new("subject public key");
@@ -124,7 +125,8 @@ impl PayloadFields {
             mode: validate_mode(mode).context("mode")?,
             code_desc: code_desc.into_optional_bytes().context("code descriptor")?,
             code_hash: code_hash.into_optional_bytes().context("code hash")?,
-            config_desc: validate_config_desc(config_desc).context("config descriptor")?,
+            config_desc: validate_config_desc(config_desc, config_format)
+                .context("config descriptor")?,
             config_hash: config_hash.into_optional_bytes().context("config hash")?,
             authority_desc: authority_desc.into_optional_bytes().context("authority descriptor")?,
             authority_hash: authority_hash.into_optional_bytes().context("authority hash")?,
@@ -165,11 +167,19 @@ fn validate_mode(mode: FieldValue) -> Result<Option<DiceMode>> {
     .transpose()
 }
 
-fn validate_config_desc(config_desc: FieldValue) -> Result<Option<ConfigDesc>> {
+fn validate_config_desc(
+    config_desc: FieldValue,
+    config_format: ConfigFormat,
+) -> Result<Option<ConfigDesc>> {
     let config_desc = config_desc.into_optional_bytes()?;
     config_desc
         .map(|config_desc| {
-            config_desc_from_slice(&config_desc).context("parsing config descriptor")
+            let config = config_desc_from_slice(&config_desc).context("parsing config descriptor");
+            if config.is_err() && config_format == ConfigFormat::Permissive {
+                Ok(ConfigDesc::default())
+            } else {
+                config
+            }
         })
         .transpose()
 }
@@ -298,42 +308,43 @@ mod tests {
 
     #[test]
     fn valid_payload() {
-        payload_from_fields(valid_payload_fields()).unwrap();
+        let fields = valid_payload_fields();
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
     }
 
     #[test]
     fn key_usage_only_key_cert_sign() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x20]));
-        payload_from_fields(fields).unwrap();
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
     }
 
     #[test]
     fn key_usage_too_long() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x20, 0x30, 0x40]));
-        assert!(payload_from_fields(fields).is_err());
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
     fn key_usage_lacks_key_cert_sign() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x10]));
-        assert!(payload_from_fields(fields).is_err());
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
     fn key_usage_not_just_key_cert_sign() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x21]));
-        assert!(payload_from_fields(fields).is_err());
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
     fn mode_not_configured() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![0]));
-        let payload = payload_from_fields(fields).unwrap();
+        let payload = Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
         assert_eq!(payload.mode(), DiceMode::NotConfigured);
     }
 
@@ -341,7 +352,7 @@ mod tests {
     fn mode_normal() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![1]));
-        let payload = payload_from_fields(fields).unwrap();
+        let payload = Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
         assert_eq!(payload.mode(), DiceMode::Normal);
     }
 
@@ -349,7 +360,7 @@ mod tests {
     fn mode_debug() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![2]));
-        let payload = payload_from_fields(fields).unwrap();
+        let payload = Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
         assert_eq!(payload.mode(), DiceMode::Debug);
     }
 
@@ -357,7 +368,7 @@ mod tests {
     fn mode_recovery() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![3]));
-        let payload = payload_from_fields(fields).unwrap();
+        let payload = Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
         assert_eq!(payload.mode(), DiceMode::Recovery);
     }
 
@@ -365,7 +376,7 @@ mod tests {
     fn mode_invalid_becomes_not_configured() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![4]));
-        let payload = payload_from_fields(fields).unwrap();
+        let payload = Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
         assert_eq!(payload.mode(), DiceMode::NotConfigured);
     }
 
@@ -373,14 +384,14 @@ mod tests {
     fn mode_multiple_bytes() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![0, 1]));
-        assert!(payload_from_fields(fields).is_err());
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
     fn subject_public_key_garbage() {
         let mut fields = valid_payload_fields();
         fields.insert(SUBJECT_PUBLIC_KEY, Value::Bytes(vec![17; 64]));
-        assert!(payload_from_fields(fields).is_err());
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
@@ -388,7 +399,7 @@ mod tests {
         let mut fields = valid_payload_fields();
         let config_desc = serialize(cbor!({-69999 => "custom"}).unwrap());
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
-        payload_from_fields(fields).unwrap();
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
     }
 
     #[test]
@@ -396,7 +407,7 @@ mod tests {
         let mut fields = valid_payload_fields();
         let config_desc = serialize(cbor!({-70000 => "reserved"}).unwrap());
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
-        payload_from_fields(fields).unwrap_err();
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
@@ -404,7 +415,7 @@ mod tests {
         let mut fields = valid_payload_fields();
         let config_desc = serialize(cbor!({-70999 => "reserved"}).unwrap());
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
-        payload_from_fields(fields).unwrap_err();
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
@@ -412,7 +423,17 @@ mod tests {
         let mut fields = valid_payload_fields();
         let config_desc = serialize(cbor!({-71000 => "custom"}).unwrap());
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
-        payload_from_fields(fields).unwrap();
+        Payload::from_cbor(&serialize_fields(fields), ConfigFormat::Android).unwrap();
+    }
+
+    #[test]
+    fn config_desc_not_android_spec() {
+        let mut fields = valid_payload_fields();
+        fields.insert(CONFIG_DESC, Value::Bytes(vec![0xcd; 64]));
+        let cbor = serialize_fields(fields);
+        Payload::from_cbor(&cbor, ConfigFormat::Android).unwrap_err();
+        let payload = Payload::from_cbor(&cbor, ConfigFormat::Permissive).unwrap();
+        assert_eq!(payload.config_desc(), &ConfigDesc::default());
     }
 
     fn valid_payload_fields() -> HashMap<i64, Value> {
@@ -431,9 +452,8 @@ mod tests {
         ])
     }
 
-    fn payload_from_fields(mut fields: HashMap<i64, Value>) -> Result<Payload> {
+    fn serialize_fields(mut fields: HashMap<i64, Value>) -> Vec<u8> {
         let value = Value::Map(fields.drain().map(|(k, v)| (Value::from(k), v)).collect());
-        let cbor = serialize(value);
-        Payload::from_cbor(&cbor)
+        serialize(value)
     }
 }

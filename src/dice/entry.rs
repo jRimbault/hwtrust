@@ -227,7 +227,7 @@ impl PayloadBuilder {
 }
 
 /// Fields from the configuration descriptor.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ConfigDesc {
     component_name: Option<String>,
     component_version: Option<i64>,
