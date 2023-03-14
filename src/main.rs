@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use hwtrust::dice;
-use hwtrust::session::{ConfigFormat, Options, Session};
+use hwtrust::session::{ConfigFormat, KeyOpsType, Options, Session};
 use std::fs;
 
 #[derive(Parser)]
@@ -38,6 +38,11 @@ struct VerifyDiceChainArgs {
     /// Allow the first DICE chain certificate to contain non-Android configuration fields
     #[clap(long)]
     allow_wrong_config_in_first_dice_cert: bool,
+
+    /// Allow the DICE chain COSE_Key objects to use a single int for key_ops as was permitted
+    /// before v3 of the RKP HAL
+    #[clap(long)]
+    allow_int_key_ops_in_dice_chain: bool,
 }
 
 fn main() -> Result<()> {
@@ -49,6 +54,11 @@ fn main() -> Result<()> {
                 ConfigFormat::Permissive
             } else {
                 ConfigFormat::default()
+            },
+            dice_chain_key_ops_type: if sub_args.allow_int_key_ops_in_dice_chain {
+                KeyOpsType::IntOrArray
+            } else {
+                KeyOpsType::default()
             },
         },
     };
