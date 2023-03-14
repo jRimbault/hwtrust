@@ -16,17 +16,26 @@ DiceChain::~DiceChain() {}
 DiceChain::DiceChain(std::unique_ptr<BoxedDiceChain> chain, size_t size) noexcept
       : chain_(std::move(chain)), size_(size) {}
 
-Result<DiceChain> DiceChain::verify(const std::vector<uint8_t>& chain) noexcept {
-    auto res = rust::VerifyDiceChain({chain.data(), chain.size()});
-    if (!res.error.empty()) {
-        return Error() << static_cast<std::string>(res.error);
-    }
-    BoxedDiceChain boxedChain = { std::move(res.chain) };
-    auto diceChain = std::make_unique<BoxedDiceChain>(std::move(boxedChain));
-    return DiceChain(std::move(diceChain), res.len);
+Result<DiceChain> DiceChain::Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind) noexcept {
+  rust::DiceChainKind chainKind;
+  switch (kind) {
+    case DiceChain::Kind::kProtectedData:
+      chainKind = rust::DiceChainKind::ProtectedData;
+      break;
+    case DiceChain::Kind::kAuthenticatedMessage:
+      chainKind = rust::DiceChainKind::AuthenticatedMessage;
+      break;
+  }
+  auto res = rust::VerifyDiceChain({chain.data(), chain.size()}, chainKind);
+  if (!res.error.empty()) {
+      return Error() << static_cast<std::string>(res.error);
+  }
+  BoxedDiceChain boxedChain = { std::move(res.chain) };
+  auto diceChain = std::make_unique<BoxedDiceChain>(std::move(boxedChain));
+  return DiceChain(std::move(diceChain), res.len);
 }
 
-Result<std::vector<std::vector<uint8_t>>> DiceChain::cose_public_keys() const noexcept {
+Result<std::vector<std::vector<uint8_t>>> DiceChain::CosePublicKeys() const noexcept {
   std::vector<std::vector<uint8_t>> result;
   for (auto i = 0; i < size_; ++i) {
     auto key = rust::GetDiceChainPublicKey(*chain_->chain, i);

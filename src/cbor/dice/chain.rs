@@ -1,18 +1,18 @@
+use super::cose_key_from_cbor_value;
 use super::entry::Entry;
 use crate::cbor::dice::entry::PayloadFields;
-use crate::cbor::{cose_error, value_from_bytes};
+use crate::cbor::value_from_bytes;
 use crate::dice::{Chain, ChainForm, DegenerateChain, Payload};
 use crate::publickey::PublicKey;
 use crate::session::{ConfigFormat, Session};
 use anyhow::{bail, Context, Result};
 use ciborium::value::Value;
-use coset::{cbor::value::Value::Array, AsCborValue, CoseKey};
 
 impl ChainForm {
     /// Decode and validate a CBOR-encoded DICE chain. The form of chain is inferred from the
     /// structure of the data.
     pub fn from_cbor(session: &Session, bytes: &[u8]) -> Result<Self> {
-        let (root_public_key, it) = root_and_entries_from_cbor(bytes)?;
+        let (root_public_key, it) = root_and_entries_from_cbor(session, bytes)?;
 
         if it.len() == 1 {
             // The chain could be degenerate so interpret it as such until it's seen to be more
@@ -21,7 +21,7 @@ impl ChainForm {
             let value = it.as_slice()[0].clone();
             let entry = Entry::verify_cbor_value(value, &root_public_key)
                 .context("parsing degenerate entry")?;
-            let fields = PayloadFields::from_cbor(entry.payload(), ConfigFormat::Android)
+            let fields = PayloadFields::from_cbor(session, entry.payload(), ConfigFormat::Android)
                 .context("parsing degenerate payload")?;
             let chain =
                 DegenerateChain::new(fields.issuer, fields.subject, fields.subject_public_key)
@@ -42,7 +42,7 @@ impl Chain {
     /// extracted. This does not perform any semantic validation of the data in the
     /// certificates such as the Authority, Config and Code hashes.
     pub fn from_cbor(session: &Session, bytes: &[u8]) -> Result<Self> {
-        let (root_public_key, it) = root_and_entries_from_cbor(bytes)?;
+        let (root_public_key, it) = root_and_entries_from_cbor(session, bytes)?;
         Self::from_root_and_entries(session, root_public_key, it)
     }
 
@@ -61,7 +61,7 @@ impl Chain {
             } else {
                 ConfigFormat::Android
             };
-            let payload = Payload::from_cbor(entry.payload(), config_format)
+            let payload = Payload::from_cbor(session, entry.payload(), config_format)
                 .with_context(|| format!("Invalid payload at index {}", n))?;
             payloads.push(payload);
             let previous = payloads.last().unwrap();
@@ -71,15 +71,17 @@ impl Chain {
     }
 }
 
-fn root_and_entries_from_cbor(bytes: &[u8]) -> Result<(PublicKey, std::vec::IntoIter<Value>)> {
+fn root_and_entries_from_cbor(
+    session: &Session,
+    bytes: &[u8],
+) -> Result<(PublicKey, std::vec::IntoIter<Value>)> {
     let value = value_from_bytes(bytes).context("Unable to decode top-level CBOR")?;
     let array = match value {
-        Array(array) if array.len() >= 2 => array,
+        Value::Array(array) if array.len() >= 2 => array,
         _ => bail!("Expected an array of at least length 2, found: {:?}", value),
     };
     let mut it = array.into_iter();
-    let root_public_key = CoseKey::from_cbor_value(it.next().unwrap())
-        .map_err(cose_error)
+    let root_public_key = cose_key_from_cbor_value(session, it.next().unwrap())
         .context("Error parsing root public key CBOR")?;
     let root_public_key = PublicKey::from_cose_key(&root_public_key).context("Invalid root key")?;
     Ok((root_public_key, it))
@@ -91,7 +93,10 @@ mod tests {
     use crate::cbor::serialize;
     use crate::dice::{DiceMode, PayloadBuilder};
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM, P384_KEY_PEM};
-    use crate::session::Options;
+    use crate::session::{KeyOpsType, Options};
+    use ciborium::cbor;
+    use coset::iana::{self, EnumI64};
+    use coset::AsCborValue;
     use std::fs;
 
     #[test]
@@ -174,6 +179,33 @@ mod tests {
         }));
         let session = Session { options: Options::default() };
         Chain::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
+    }
+
+    #[test]
+    fn chain_from_cbor_root_key_integer_key_ops() {
+        let root_key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+        let root_public_key = root_key.public_key().pkey().raw_public_key().unwrap();
+        let root_cose_key = cbor!({
+            iana::KeyParameter::Kty.to_i64() => iana::KeyType::OKP.to_i64(),
+            iana::KeyParameter::Alg.to_i64() => iana::Algorithm::EdDSA.to_i64(),
+            iana::KeyParameter::KeyOps.to_i64() => iana::KeyOperation::Verify.to_i64(),
+            iana::OkpKeyParameter::Crv.to_i64() => iana::EllipticCurve::Ed25519.to_i64(),
+            iana::OkpKeyParameter::X.to_i64() => Value::Bytes(root_public_key),
+        })
+        .unwrap();
+        let entry_pub_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let entry = Entry::from_payload(&valid_payload(0, entry_pub_key)).unwrap();
+        let chain = vec![root_cose_key, entry.sign(&root_key).to_cbor_value().unwrap()];
+        let cbor = serialize(Value::Array(chain));
+        let session = Session { options: Options::default() };
+        Chain::from_cbor(&session, &cbor).unwrap_err();
+        let session = Session {
+            options: Options {
+                dice_chain_key_ops_type: KeyOpsType::IntOrArray,
+                ..Options::default()
+            },
+        };
+        Chain::from_cbor(&session, &cbor).unwrap();
     }
 
     #[test]
