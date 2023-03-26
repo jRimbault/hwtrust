@@ -4,7 +4,7 @@ use crate::cbor::{cose_error, value_from_bytes};
 use crate::dice::{ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder};
 use crate::publickey::PublicKey;
 use crate::session::ConfigFormat;
-use crate::session::Session;
+use crate::session::{ModeType, Session};
 use anyhow::{anyhow, bail, Context, Result};
 use ciborium::value::Value;
 use coset::{AsCborValue, CoseSign1};
@@ -132,7 +132,7 @@ impl PayloadFields {
             issuer: issuer.into_string().context("issuer")?,
             subject: subject.into_string().context("subject")?,
             subject_public_key: validate_subject_public_key(session, subject_public_key)?,
-            mode: validate_mode(mode).context("mode")?,
+            mode: validate_mode(session, mode).context("mode")?,
             code_desc: code_desc.into_optional_bytes().context("code descriptor")?,
             code_hash: code_hash.into_optional_bytes().context("code hash")?,
             config_desc: validate_config_desc(config_desc, config_format)
@@ -164,20 +164,25 @@ fn validate_subject_public_key(
         .context("parsing subject public key from COSE_key")
 }
 
-fn validate_mode(mode: FieldValue) -> Result<Option<DiceMode>> {
-    let mode = mode.into_optional_bytes()?;
-    mode.map(|mode| {
-        if mode.len() != 1 {
-            bail!("Expected mode to be a single byte, actual byte count: {}", mode.len())
-        };
-        Ok(match mode[0] {
-            1 => DiceMode::Normal,
-            2 => DiceMode::Debug,
-            3 => DiceMode::Recovery,
-            _ => DiceMode::NotConfigured,
-        })
-    })
-    .transpose()
+fn validate_mode(session: &Session, mode: FieldValue) -> Result<Option<DiceMode>> {
+    Ok(if !mode.is_bytes() && session.options.dice_chain_mode_type == ModeType::IntOrBytes {
+        mode.into_optional_i64()?
+    } else {
+        mode.into_optional_bytes()?
+            .map(|mode| {
+                if mode.len() != 1 {
+                    bail!("Expected mode to be a single byte, actual byte count: {}", mode.len())
+                };
+                Ok(mode[0].into())
+            })
+            .transpose()?
+    }
+    .map(|mode| match mode {
+        1 => DiceMode::Normal,
+        2 => DiceMode::Debug,
+        3 => DiceMode::Recovery,
+        _ => DiceMode::NotConfigured,
+    }))
 }
 
 fn validate_config_desc(
@@ -416,6 +421,20 @@ mod tests {
         fields.insert(MODE, Value::Bytes(vec![0, 1]));
         let session = Session { options: Options::default() };
         Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+    }
+
+    #[test]
+    fn mode_int_debug() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::from(2));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let session = Session {
+            options: Options { dice_chain_mode_type: ModeType::IntOrBytes, ..Options::default() },
+        };
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        assert_eq!(payload.mode(), DiceMode::Debug);
     }
 
     #[test]
