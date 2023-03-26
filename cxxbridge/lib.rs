@@ -3,16 +3,16 @@
 
 use coset::CborSerializable;
 use hwtrust::dice::ChainForm;
-use hwtrust::session::{ConfigFormat, KeyOpsType, Options, Session};
+use hwtrust::session::{Options, Session};
 
 #[cxx::bridge(namespace = "hwtrust::rust")]
 mod ffi {
-    /// The kind of DICE chain to verify which implies the set of validation rules to apply.
+    /// The set of validation rules to apply.
     enum DiceChainKind {
-        /// The DICE chain from an AuthenticatedMessage.
-        AuthenticatedMessage,
-        /// The DICE chain from ProtectedData.
-        ProtectedData,
+        /// The DICE chain specified by VSR 13.
+        Vsr13,
+        /// The DICE chain specified by VSR 14.
+        Vsr14,
     }
 
     /// The result type used by [`verify_dice_chain()`]. The standard [`Result`] is currently only
@@ -43,22 +43,16 @@ pub struct DiceChain(Option<ChainForm>);
 
 fn verify_dice_chain(chain: &[u8], kind: ffi::DiceChainKind) -> ffi::VerifyDiceChainResult {
     let session = Session {
-        options: Options {
-            first_dice_chain_cert_config_format: ConfigFormat::Permissive,
-            // DICE chains in ProtectedData objects follow the specification from versions 1 and 2
-            // of the HAL which allowed for key_ops to be an integer as opposed to the array that
-            // is specified by COSE.
-            dice_chain_key_ops_type: match kind {
-                ffi::DiceChainKind::AuthenticatedMessage => KeyOpsType::default(),
-                ffi::DiceChainKind::ProtectedData => KeyOpsType::IntOrArray,
-                _ => {
-                    return ffi::VerifyDiceChainResult {
-                        error: "invalid chain kind".to_string(),
-                        chain: Box::new(DiceChain(None)),
-                        len: 0,
-                    }
+        options: match kind {
+            ffi::DiceChainKind::Vsr13 => Options::vsr13(),
+            ffi::DiceChainKind::Vsr14 => Options::vsr14(),
+            _ => {
+                return ffi::VerifyDiceChainResult {
+                    error: "invalid chain kind".to_string(),
+                    chain: Box::new(DiceChain(None)),
+                    len: 0,
                 }
-            },
+            }
         },
     };
     match ChainForm::from_cbor(&session, chain) {

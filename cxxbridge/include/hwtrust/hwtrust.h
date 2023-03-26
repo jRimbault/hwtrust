@@ -13,8 +13,8 @@ struct BoxedDiceChain;
 class DiceChain final {
 public:
   enum class Kind {
-    kAuthenticatedMessage,
-    kProtectedData,
+    kVsr13,
+    kVsr14,
   };
 
   static android::base::Result<DiceChain> Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind) noexcept;
