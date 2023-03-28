@@ -126,7 +126,7 @@ impl PayloadFields {
             }
         }
 
-        validate_key_usage(key_usage)?;
+        validate_key_usage(session, key_usage)?;
 
         Ok(Self {
             issuer: issuer.into_string().context("issuer")?,
@@ -144,10 +144,17 @@ impl PayloadFields {
     }
 }
 
-fn validate_key_usage(key_usage: FieldValue) -> Result<()> {
+fn validate_key_usage(session: &Session, key_usage: FieldValue) -> Result<()> {
     let key_usage = key_usage.into_bytes().context("key usage")?;
-    if key_usage.len() != 1 || key_usage[0] != 0x20 {
-        bail!("key usage must be keyCertSign");
+    if key_usage.len() > 1
+        && session.options.dice_chain_allow_big_endian_key_usage
+        && key_usage[key_usage.len() - 1] == 0x20
+        && key_usage.iter().take(key_usage.len() - 1).all(|&x| x == 0)
+    {
+        return Ok(());
+    }
+    if key_usage.is_empty() || key_usage[0] != 0x20 || !key_usage.iter().skip(1).all(|&x| x == 0) {
+        bail!("key usage must only contain keyCertSign (bit 5)");
     };
     Ok(())
 }
@@ -443,6 +450,76 @@ mod tests {
         fields.insert(SUBJECT_PUBLIC_KEY, Value::Bytes(vec![17; 64]));
         let session = Session { options: Options::default() };
         Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+    }
+
+    #[test]
+    fn key_usage_little_endian() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x20, 0x00, 0x00]));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+    }
+
+    #[test]
+    fn key_usage_little_endian_invalid() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x20, 0xbe, 0xef]));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+    }
+
+    #[test]
+    fn key_usage_big_endian() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0x20]));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let session = Session {
+            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
+        };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+    }
+
+    #[test]
+    fn key_usage_big_endian_invalid() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0xfe, 0x20]));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let session = Session {
+            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
+        };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+    }
+
+    #[test]
+    fn key_usage_invalid() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0x10]));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let session = Session {
+            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
+        };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+    }
+
+    #[test]
+    fn key_usage_empty() {
+        let mut fields = valid_payload_fields();
+        fields.insert(KEY_USAGE, Value::Bytes(vec![]));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let session = Session {
+            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
+        };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
