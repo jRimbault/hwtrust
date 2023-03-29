@@ -4,5 +4,5 @@ mod chain;
 mod entry;
 
 pub use chain::{Chain, ChainForm, DegenerateChain};
-pub use entry::{ConfigDesc, DiceMode, Payload};
+pub use entry::{ComponentVersion, ConfigDesc, DiceMode, Payload};
 pub(crate) use entry::{ConfigDescBuilder, PayloadBuilder};

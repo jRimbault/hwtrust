@@ -73,6 +73,10 @@ impl FieldValue {
             .unwrap_or(Ok(false))
     }
 
+    pub fn is_integer(&self) -> bool {
+        self.value.as_ref().map_or(false, |v| v.is_integer())
+    }
+
     pub fn into_optional_i64(self) -> Result<Option<i64>> {
         self.value
             .map(|v| {
