@@ -39,3 +39,23 @@ pub enum KeyOpsType {
     /// The key_ops field can be either a single int or an array as specified in the COSE RFC.
     IntOrArray,
 }
+
+impl Options {
+    /// The options use by VSR 13.
+    pub fn vsr13() -> Self {
+        Self {
+            // Context: b/262599829#comment65
+            dice_chain_key_ops_type: KeyOpsType::IntOrArray,
+            ..Options::default()
+        }
+    }
+
+    /// The options use by VSR 14.
+    pub fn vsr14() -> Self {
+        Self {
+            // Context: b/261647022
+            first_dice_chain_cert_config_format: ConfigFormat::Permissive,
+            ..Options::default()
+        }
+    }
+}
