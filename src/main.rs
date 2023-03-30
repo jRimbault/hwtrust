@@ -1,9 +1,9 @@
 //! A tool for handling data related to the hardware root-of-trust.
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use hwtrust::dice;
-use hwtrust::session::{ConfigFormat, KeyOpsType, Options, Session};
+use hwtrust::session::{Options, Session};
 use std::fs;
 
 #[derive(Parser)]
@@ -35,31 +35,29 @@ struct VerifyDiceChainArgs {
     /// Path to a file containing a DICE chain
     chain: String,
 
-    /// Allow the first DICE chain certificate to contain non-Android configuration fields
-    #[clap(long)]
-    allow_wrong_config_in_first_dice_cert: bool,
+    /// The VSR version to validate against. If omitted, the set of rules that are used have no
+    /// compromises or workarounds and new implementations should validate against them as it will
+    /// be the basis for future VSR versions.
+    #[clap(long, value_enum)]
+    vsr: Option<VsrVersion>,
+}
 
-    /// Allow the DICE chain COSE_Key objects to use a single int for key_ops as was permitted
-    /// before v3 of the RKP HAL
-    #[clap(long)]
-    allow_int_key_ops_in_dice_chain: bool,
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum VsrVersion {
+    /// VSR 13 / Android T / 2022
+    Vsr13,
+    /// VSR 14 / Android U / 2023
+    Vsr14,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let Action::VerifyDiceChain(sub_args) = args.action;
     let session = Session {
-        options: Options {
-            first_dice_chain_cert_config_format: if sub_args.allow_wrong_config_in_first_dice_cert {
-                ConfigFormat::Permissive
-            } else {
-                ConfigFormat::default()
-            },
-            dice_chain_key_ops_type: if sub_args.allow_int_key_ops_in_dice_chain {
-                KeyOpsType::IntOrArray
-            } else {
-                KeyOpsType::default()
-            },
+        options: match sub_args.vsr {
+            Some(VsrVersion::Vsr13) => Options::vsr13(),
+            Some(VsrVersion::Vsr14) => Options::vsr14(),
+            None => Options::default(),
         },
     };
     let chain = dice::Chain::from_cbor(&session, &fs::read(sub_args.chain)?)?;
