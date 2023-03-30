@@ -19,11 +19,11 @@ DiceChain::DiceChain(std::unique_ptr<BoxedDiceChain> chain, size_t size) noexcep
 Result<DiceChain> DiceChain::Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind) noexcept {
   rust::DiceChainKind chainKind;
   switch (kind) {
-    case DiceChain::Kind::kProtectedData:
-      chainKind = rust::DiceChainKind::ProtectedData;
+    case DiceChain::Kind::kVsr13:
+      chainKind = rust::DiceChainKind::Vsr13;
       break;
-    case DiceChain::Kind::kAuthenticatedMessage:
-      chainKind = rust::DiceChainKind::AuthenticatedMessage;
+    case DiceChain::Kind::kVsr14:
+      chainKind = rust::DiceChainKind::Vsr14;
       break;
   }
   auto res = rust::VerifyDiceChain({chain.data(), chain.size()}, chainKind);
