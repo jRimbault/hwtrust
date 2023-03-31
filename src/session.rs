@@ -23,6 +23,12 @@ pub struct Options {
     /// be used for compatibility with the RKP HAL v3 which allowed some deviations from the Open
     /// Profile for DICE specification.
     pub dice_chain_mode_type: ModeType,
+
+    /// Whether to allow the key_usage field of the DICE certificates to be encoded in big-endian
+    /// byte order. This introduces ambiguity of the exact key usage being expressed but the keys
+    /// in the DICE chain are only used for verification so it may be preferable to allow for
+    /// compatibility with implementations that use the wrong endianness.
+    pub dice_chain_allow_big_endian_key_usage: bool,
 }
 
 /// Format of the DICE configuration descriptor.
@@ -73,6 +79,7 @@ impl Options {
             first_dice_chain_cert_config_format: ConfigFormat::Permissive,
             // Context: b/273552826
             dice_chain_mode_type: ModeType::IntOrBytes,
+            dice_chain_allow_big_endian_key_usage: true,
             ..Options::default()
         }
     }
