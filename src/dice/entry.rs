@@ -226,11 +226,30 @@ impl PayloadBuilder {
     }
 }
 
+/// Version of the component from the configuration descriptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentVersion {
+    /// An integer component version number.
+    Integer(i64),
+    /// A free-form string component version.
+    String(String),
+}
+
+impl Display for ComponentVersion {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        match self {
+            ComponentVersion::Integer(n) => write!(f, "{n}")?,
+            ComponentVersion::String(s) => write!(f, "{s}")?,
+        }
+        Ok(())
+    }
+}
+
 /// Fields from the configuration descriptor.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ConfigDesc {
     component_name: Option<String>,
-    component_version: Option<i64>,
+    component_version: Option<ComponentVersion>,
     resettable: bool,
 }
 
@@ -241,8 +260,8 @@ impl ConfigDesc {
     }
 
     /// Gets the component version.
-    pub fn component_version(&self) -> Option<i64> {
-        self.component_version
+    pub fn component_version(&self) -> Option<&ComponentVersion> {
+        self.component_version.as_ref()
     }
 
     /// Returns whether the component is factory resettable.
@@ -288,7 +307,7 @@ impl ConfigDescBuilder {
 
     /// Sets the component version.
     #[must_use]
-    pub fn component_version(mut self, version: Option<i64>) -> Self {
+    pub fn component_version(mut self, version: Option<ComponentVersion>) -> Self {
         self.0.component_version = version;
         self
     }
