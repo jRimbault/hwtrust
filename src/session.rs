@@ -29,6 +29,11 @@ pub struct Options {
     /// in the DICE chain are only used for verification so it may be preferable to allow for
     /// compatibility with implementations that use the wrong endianness.
     pub dice_chain_allow_big_endian_key_usage: bool,
+
+    /// The types that are permitted for the component version field in the configuration
+    /// descriptor. The specification has changed the allowed types over time and this option
+    /// can be used to select which rules to apply.
+    pub dice_chain_component_version_type: ComponentVersionType,
 }
 
 /// Format of the DICE configuration descriptor.
@@ -62,12 +67,24 @@ pub enum ModeType {
     IntOrBytes,
 }
 
+/// Type allowed for the DICE certificate configuration descriptor's component version field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ComponentVersionType {
+    /// The component version can be either an int or a free-form string.
+    #[default]
+    IntOrString,
+    /// The component version must be an int.
+    Int,
+}
+
 impl Options {
     /// The options use by VSR 13.
     pub fn vsr13() -> Self {
         Self {
             // Context: b/262599829#comment65
             dice_chain_key_ops_type: KeyOpsType::IntOrArray,
+            // Context: b/273552826
+            dice_chain_component_version_type: ComponentVersionType::Int,
             ..Options::default()
         }
     }
