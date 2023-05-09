@@ -100,4 +100,9 @@ impl Options {
             ..Options::default()
         }
     }
+
+    /// The options use by VSR 15.
+    pub fn vsr15() -> Self {
+        Options::default()
+    }
 }
