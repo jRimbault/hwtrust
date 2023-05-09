@@ -48,6 +48,8 @@ enum VsrVersion {
     Vsr13,
     /// VSR 14 / Android U / 2023
     Vsr14,
+    /// VSR 15 / Android V / 2024
+    Vsr15,
 }
 
 fn main() -> Result<()> {
@@ -57,6 +59,7 @@ fn main() -> Result<()> {
         options: match sub_args.vsr {
             Some(VsrVersion::Vsr13) => Options::vsr13(),
             Some(VsrVersion::Vsr14) => Options::vsr14(),
+            Some(VsrVersion::Vsr15) => Options::vsr15(),
             None => Options::default(),
         },
     };
