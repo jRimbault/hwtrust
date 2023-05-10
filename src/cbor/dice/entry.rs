@@ -121,7 +121,15 @@ impl PayloadFields {
                     KEY_USAGE => &mut key_usage,
                     _ => bail!("Unknown key {}", key),
                 };
-                field.set(value)?;
+                match field.get() {
+                    Some(existing) => bail!(
+                        "duplicate values for {}: {:?} and {:?}",
+                        field.name(),
+                        existing,
+                        value
+                    ),
+                    None => field.set(value),
+                }
             } else {
                 bail!("Invalid key: {:?}", key);
             }
@@ -235,26 +243,29 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
 
     for (key, value) in entries.into_iter() {
         if let Some(Ok(key)) = key.as_integer().map(TryInto::try_into) {
-            match key {
-                COMPONENT_NAME => {
-                    component_name.set(value).context("Error setting component name")?
-                }
-                COMPONENT_VERSION => {
-                    component_version.set(value).context("Error setting component version")?
-                }
-                RESETTABLE => resettable.set(value).context("Error setting resettable")?,
+            let field = match key {
+                COMPONENT_NAME => &mut component_name,
+                COMPONENT_VERSION => &mut component_version,
+                RESETTABLE => &mut resettable,
                 key if (CONFIG_DESC_RESERVED_MIN..=CONFIG_DESC_RESERVED_MAX).contains(&key) => {
                     bail!("Reserved key {}", key);
                 }
                 _ => match extensions.entry(key) {
                     Vacant(entry) => {
                         entry.insert(value);
+                        continue;
                     }
                     Occupied(entry) => {
                         bail!("Duplicate values for {}: {:?} and {:?}", key, entry.get(), value)
                     }
                 },
             };
+            match field.get() {
+                Some(existing) => {
+                    bail!("duplicate values for {}: {:?} and {:?}", field.name(), existing, value)
+                }
+                None => field.set(value),
+            }
         } else {
             bail!("Invalid key: {:?}", key);
         }
