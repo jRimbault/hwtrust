@@ -29,6 +29,7 @@ const CONFIG_DESC_RESERVED_MIN: i64 = -70999;
 const COMPONENT_NAME: i64 = -70002;
 const COMPONENT_VERSION: i64 = -70003;
 const RESETTABLE: i64 = -70004;
+const SECURITY_VERSION: i64 = -70005;
 
 pub(super) struct Entry {
     payload: Vec<u8>,
@@ -239,6 +240,7 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
     let mut component_name = FieldValue::new("component name");
     let mut component_version = FieldValue::new("component version");
     let mut resettable = FieldValue::new("resettable");
+    let mut security_version = FieldValue::new("security version");
     let mut extensions = HashMap::new();
 
     for (key, value) in entries.into_iter() {
@@ -247,6 +249,7 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
                 COMPONENT_NAME => &mut component_name,
                 COMPONENT_VERSION => &mut component_version,
                 RESETTABLE => &mut resettable,
+                SECURITY_VERSION => &mut security_version,
                 key if (CONFIG_DESC_RESERVED_MIN..=CONFIG_DESC_RESERVED_MAX).contains(&key) => {
                     bail!("Reserved key {}", key);
                 }
@@ -277,6 +280,7 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
             validate_version(session, component_version).context("Component version")?,
         )
         .resettable(resettable.is_null().context("Resettable")?)
+        .security_version(security_version.into_optional_u64().context("Security version")?)
         .build())
 }
 
@@ -368,6 +372,9 @@ mod tests {
         }
         if config_desc.resettable() {
             map.push((Value::from(RESETTABLE), Value::Null));
+        }
+        if let Some(security_version) = config_desc.security_version() {
+            map.push((Value::from(SECURITY_VERSION), Value::from(security_version)));
         }
         Value::Map(map)
     }
@@ -627,6 +634,42 @@ mod tests {
             payload.config_desc().component_version(),
             Some(&ComponentVersion::String("It's version 4".to_string()))
         );
+    }
+
+    #[test]
+    fn config_desc_security_version() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({SECURITY_VERSION => Value::from(0x12345678)}).unwrap());
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        assert_eq!(payload.config_desc().security_version(), Some(0x12345678));
+    }
+
+    #[test]
+    fn config_desc_security_version_fixed_size_encoding() {
+        let mut fields = valid_payload_fields();
+        let config_desc = vec![
+            0xa1, // Map of one element.
+            0x3a, 0x00, 0x01, 0x11, 0x74, // SECURITY_VERSION.
+            0x1a, 0x00, 0x00, 0xca, 0xfe, // Non-deterministic encoding of 0xcafe.
+        ];
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        assert_eq!(payload.config_desc().security_version(), Some(0xcafe));
+    }
+
+    #[test]
+    fn config_desc_security_version_negative() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({SECURITY_VERSION => Value::from(-12)}).unwrap());
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
