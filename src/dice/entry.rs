@@ -251,6 +251,7 @@ pub struct ConfigDesc {
     component_name: Option<String>,
     component_version: Option<ComponentVersion>,
     resettable: bool,
+    security_version: Option<u64>,
 }
 
 impl ConfigDesc {
@@ -268,6 +269,11 @@ impl ConfigDesc {
     pub fn resettable(&self) -> bool {
         self.resettable
     }
+
+    /// Gets the security version.
+    pub fn security_version(&self) -> Option<u64> {
+        self.security_version
+    }
 }
 
 impl Display for ConfigDesc {
@@ -280,6 +286,9 @@ impl Display for ConfigDesc {
         }
         if self.resettable {
             writeln!(f, "Resettable")?;
+        }
+        if let Some(security_version) = &self.security_version {
+            writeln!(f, "Security Version: {}", security_version)?;
         }
         Ok(())
     }
@@ -316,6 +325,13 @@ impl ConfigDescBuilder {
     #[must_use]
     pub fn resettable(mut self, resettable: bool) -> Self {
         self.0.resettable = resettable;
+        self
+    }
+
+    /// Sets the security version.
+    #[must_use]
+    pub fn security_version(mut self, version: Option<u64>) -> Self {
+        self.0.security_version = version;
         self
     }
 }
