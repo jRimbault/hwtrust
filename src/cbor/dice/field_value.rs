@@ -15,6 +15,8 @@ pub enum FieldValueError {
     NotNull(Value),
     #[error("expected i64 but found `{0:?}`")]
     NotI64(Value),
+    #[error("expected u64 but found `{0:?}`")]
+    NotU64(Value),
 }
 
 pub(super) struct FieldValue {
@@ -91,6 +93,16 @@ impl FieldValue {
                 let value =
                     if let Value::Integer(i) = v { i128::from(i).try_into().ok() } else { None };
                 value.ok_or_else(|| FieldValueError::NotI64(v))
+            })
+            .transpose()
+    }
+
+    pub fn into_optional_u64(self) -> Result<Option<u64>, FieldValueError> {
+        self.value
+            .map(|v| {
+                let value =
+                    if let Value::Integer(i) = v { i128::from(i).try_into().ok() } else { None };
+                value.ok_or_else(|| FieldValueError::NotU64(v))
             })
             .transpose()
     }
