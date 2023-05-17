@@ -3,6 +3,7 @@
 
 pub mod dice;
 pub mod publickey;
+pub mod rkp;
 pub mod session;
 
 mod cbor;
