@@ -91,12 +91,13 @@ fn root_and_entries_from_cbor(
 mod tests {
     use super::*;
     use crate::cbor::serialize;
-    use crate::dice::{DiceMode, PayloadBuilder};
+    use crate::dice::{ConfigDesc, DiceMode, PayloadBuilder};
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM, P384_KEY_PEM};
     use crate::session::{KeyOpsType, Options};
     use ciborium::cbor;
     use coset::iana::{self, EnumI64};
     use coset::AsCborValue;
+    use openssl::sha::sha512;
     use std::fs;
 
     #[test]
@@ -126,7 +127,9 @@ mod tests {
     #[test]
     fn check_chain_valid_p256() {
         let chain = fs::read("testdata/dice/valid_p256.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options { dice_chain_config_hash_unverified: true, ..Options::default() },
+        };
         let chain = Chain::from_cbor(&session, &chain).unwrap();
         assert_eq!(chain.payloads().len(), 3);
     }
@@ -239,11 +242,15 @@ mod tests {
     }
 
     fn valid_payload(index: usize, key: PublicKey) -> Payload {
+        let config_desc = ConfigDesc::default();
+        let config_hash = sha512(&serialize(config_desc.to_cbor_value())).to_vec();
         PayloadBuilder::with_subject_public_key(key)
             .issuer(format!("item {}", index))
             .subject(format!("item {}", index + 1))
             .mode(DiceMode::Normal)
             .code_hash(vec![6; 64])
+            .config_desc(config_desc)
+            .config_hash(Some(config_hash))
             .authority_hash(vec![7; 64])
             .build()
             .unwrap()

@@ -34,6 +34,11 @@ pub struct Options {
     /// descriptor. The specification has changed the allowed types over time and this option
     /// can be used to select which rules to apply.
     pub dice_chain_component_version_type: ComponentVersionType,
+
+    /// Whether the configuration hash is verified to be present and derived from the configuration
+    /// descriptor. This allows for compatibility with early versions of the RKP HAL which did not
+    /// enforce the requirements on the configuration hash as defined by the Open Profile for DICE.
+    pub dice_chain_config_hash_unverified: bool,
 }
 
 /// Format of the DICE configuration descriptor.
@@ -85,6 +90,7 @@ impl Options {
             dice_chain_key_ops_type: KeyOpsType::IntOrArray,
             // Context: b/273552826
             dice_chain_component_version_type: ComponentVersionType::Int,
+            dice_chain_config_hash_unverified: true,
             ..Options::default()
         }
     }
@@ -97,6 +103,7 @@ impl Options {
             // Context: b/273552826
             dice_chain_mode_type: ModeType::IntOrBytes,
             dice_chain_allow_big_endian_key_usage: true,
+            dice_chain_config_hash_unverified: true,
             ..Options::default()
         }
     }
