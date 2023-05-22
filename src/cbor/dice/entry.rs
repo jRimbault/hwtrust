@@ -141,16 +141,16 @@ impl PayloadFields {
             validate_config(session, config_desc, config_hash, config_format).context("config")?;
 
         Ok(Self {
-            issuer: issuer.into_string().context("issuer")?,
-            subject: subject.into_string().context("subject")?,
+            issuer: issuer.into_string()?,
+            subject: subject.into_string()?,
             subject_public_key: validate_subject_public_key(session, subject_public_key)?,
-            mode: validate_mode(session, mode).context("mode")?,
-            code_desc: code_desc.into_optional_bytes().context("code descriptor")?,
-            code_hash: code_hash.into_optional_bytes().context("code hash")?,
+            mode: validate_mode(session, mode)?,
+            code_desc: code_desc.into_optional_bytes()?,
+            code_hash: code_hash.into_optional_bytes()?,
             config_desc,
             config_hash,
-            authority_desc: authority_desc.into_optional_bytes().context("authority descriptor")?,
-            authority_hash: authority_hash.into_optional_bytes().context("authority hash")?,
+            authority_desc: authority_desc.into_optional_bytes()?,
+            authority_hash: authority_hash.into_optional_bytes()?,
         })
     }
 }
@@ -178,7 +178,7 @@ fn validate_subject_public_key(
     session: &Session,
     subject_public_key: FieldValue,
 ) -> Result<PublicKey> {
-    let subject_public_key = subject_public_key.into_bytes().context("Subject public")?;
+    let subject_public_key = subject_public_key.into_bytes()?;
     let subject_public_key = value_from_bytes(&subject_public_key).context("decode CBOR")?;
     let subject_public_key = cose_key_from_cbor_value(session, subject_public_key)
         .context("parsing subject public key")?;
@@ -213,8 +213,8 @@ fn validate_config(
     config_hash: FieldValue,
     config_format: ConfigFormat,
 ) -> Result<(Option<ConfigDesc>, Option<Vec<u8>>)> {
-    let config_desc = config_desc.into_optional_bytes().context("descriptor")?;
-    let config_hash = config_hash.into_optional_bytes().context("hash")?;
+    let config_desc = config_desc.into_optional_bytes()?;
+    let config_hash = config_hash.into_optional_bytes()?;
     if let Some(config_desc) = config_desc {
         let config = config_desc_from_slice(session, &config_desc).context("parsing descriptor");
         if config.is_err() && config_format == ConfigFormat::Permissive {
