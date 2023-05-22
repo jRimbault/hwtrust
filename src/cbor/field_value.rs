@@ -5,18 +5,18 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum FieldValueError {
-    #[error("expected a value but none was found")]
-    Missing,
-    #[error("expected bytes but found `{0:?}`")]
-    NotBytes(Value),
-    #[error("expected string but found `{0:?}`")]
-    NotString(Value),
-    #[error("expected null but found `{0:?}`")]
-    NotNull(Value),
-    #[error("expected i64 but found `{0:?}`")]
-    NotI64(Value),
-    #[error("expected u64 but found `{0:?}`")]
-    NotU64(Value),
+    #[error("expected a value for field {0}, but none was found")]
+    Missing(&'static str),
+    #[error("expected bytes for field {0}, but found `{1:?}`")]
+    NotBytes(&'static str, Value),
+    #[error("expected string for field {0}, but found `{1:?}`")]
+    NotString(&'static str, Value),
+    #[error("expected null for field {0}, but found `{1:?}`")]
+    NotNull(&'static str, Value),
+    #[error("expected i64 for field {0}, but found `{1:?}`")]
+    NotI64(&'static str, Value),
+    #[error("expected u64 for field {0}, but found `{1:?}`")]
+    NotU64(&'static str, Value),
 }
 
 pub(super) struct FieldValue {
@@ -49,26 +49,26 @@ impl FieldValue {
         self.value
             .map(|v| match v {
                 Value::Bytes(b) => Ok(b),
-                _ => Err(FieldValueError::NotBytes(v)),
+                _ => Err(FieldValueError::NotBytes(self.name, v)),
             })
             .transpose()
     }
 
     pub fn into_bytes(self) -> Result<Vec<u8>, FieldValueError> {
-        require_present(self.into_optional_bytes())
+        require_present(self.name, self.into_optional_bytes())
     }
 
     pub fn into_optional_string(self) -> Result<Option<String>, FieldValueError> {
         self.value
             .map(|v| match v {
                 Value::Text(s) => Ok(s),
-                _ => Err(FieldValueError::NotString(v)),
+                _ => Err(FieldValueError::NotString(self.name, v)),
             })
             .transpose()
     }
 
     pub fn into_string(self) -> Result<String, FieldValueError> {
-        require_present(self.into_optional_string())
+        require_present(self.name, self.into_optional_string())
     }
 
     pub fn is_null(&self) -> Result<bool, FieldValueError> {
@@ -78,7 +78,7 @@ impl FieldValue {
             .as_ref()
             .map(|v| match *v {
                 Value::Null => Ok(true),
-                _ => Err(FieldValueError::NotNull(v.clone())),
+                _ => Err(FieldValueError::NotNull(self.name, v.clone())),
             })
             .unwrap_or(Ok(false))
     }
@@ -92,7 +92,7 @@ impl FieldValue {
             .map(|v| {
                 let value =
                     if let Value::Integer(i) = v { i128::from(i).try_into().ok() } else { None };
-                value.ok_or_else(|| FieldValueError::NotI64(v))
+                value.ok_or_else(|| FieldValueError::NotI64(self.name, v))
             })
             .transpose()
     }
@@ -102,12 +102,15 @@ impl FieldValue {
             .map(|v| {
                 let value =
                     if let Value::Integer(i) = v { i128::from(i).try_into().ok() } else { None };
-                value.ok_or_else(|| FieldValueError::NotU64(v))
+                value.ok_or_else(|| FieldValueError::NotU64(self.name, v))
             })
             .transpose()
     }
 }
 
-fn require_present<T>(value: Result<Option<T>, FieldValueError>) -> Result<T, FieldValueError> {
-    value.and_then(|opt| opt.ok_or(FieldValueError::Missing))
+fn require_present<T>(
+    name: &'static str,
+    value: Result<Option<T>, FieldValueError>,
+) -> Result<T, FieldValueError> {
+    value.and_then(|opt| opt.ok_or(FieldValueError::Missing(name)))
 }
