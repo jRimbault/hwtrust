@@ -1,6 +1,5 @@
 use super::cose_key_from_cbor_value;
-use super::field_value::FieldValue;
-use crate::cbor::{cose_error, value_from_bytes};
+use crate::cbor::{cose_error, field_value::FieldValue, value_from_bytes};
 use crate::dice::{
     ComponentVersion, ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder,
 };
