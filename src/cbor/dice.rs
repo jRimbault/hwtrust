@@ -9,7 +9,6 @@ use coset::{AsCborValue, CoseKey, Label};
 
 mod chain;
 mod entry;
-mod field_value;
 
 /// Convert a `Value` into a `CoseKey`, respecting the `Session` options that might alter the
 /// validation rules for `CoseKey`s in the DICE chain.
