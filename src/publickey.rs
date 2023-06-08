@@ -8,10 +8,17 @@ use openssl::sign::Verifier;
 use std::error::Error;
 use std::fmt;
 
-/// Enumeration of the kinds of key that are supported.
+/// The kinds of digital signature keys that are supported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
+pub(crate) enum SignatureKind {
     Ed25519,
+    Ec(EcKind),
+}
+
+/// The kinds of key agreement keys that are supported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyAgreementKind {
+    X25519,
     Ec(EcKind),
 }
 
@@ -22,28 +29,40 @@ pub(crate) enum EcKind {
     P384,
 }
 
-/// Struct wrapping the public key and relevant validation methods.
+// Wraps PKey<Public> so we can implement some traits around it, allowing for derived traits on
+// types that include a PKey<Public>.
 #[derive(Clone, Debug)]
+struct PKeyPublicWrapper(PKey<Public>);
+
+/// Public key used for signature validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicKey {
-    kind: Kind,
-    pkey: PKey<Public>,
+    kind: SignatureKind,
+    pkey: PKeyPublicWrapper,
+}
+
+/// Public key used for key agreement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyAgreementPublicKey {
+    kind: KeyAgreementKind,
+    pkey: PKeyPublicWrapper,
 }
 
 impl PublicKey {
-    pub(crate) fn kind(&self) -> Kind {
+    pub(crate) fn kind(&self) -> SignatureKind {
         self.kind
     }
 
     pub(crate) fn pkey(&self) -> &PKeyRef<Public> {
-        &self.pkey
+        &self.pkey.0
     }
 
     /// Verify that the signature obtained from signing the given message
     /// with the PublicKey matches the signature provided.
     pub fn verify(&self, signature: &[u8], message: &[u8]) -> Result<()> {
         let mut verifier = match self.kind {
-            Kind::Ed25519 => Verifier::new_without_digest(&self.pkey),
-            Kind::Ec(ec) => Verifier::new(digest_for_ec(ec), &self.pkey),
+            SignatureKind::Ed25519 => Verifier::new_without_digest(&self.pkey.0),
+            SignatureKind::Ec(ec) => Verifier::new(digest_for_ec(ec), &self.pkey.0),
         }
         .with_context(|| format!("Failed to create verifier {:?}", self.kind))?;
         let verified =
@@ -54,7 +73,44 @@ impl PublicKey {
 
     /// Serializes the public key into a PEM-encoded SubjectPublicKeyInfo structure.
     pub fn to_pem(&self) -> String {
-        String::from_utf8(self.pkey.public_key_to_pem().unwrap()).unwrap()
+        self.pkey.to_pem()
+    }
+
+    fn pkey_kind<T: HasParams>(pkey: &PKeyRef<T>) -> Option<SignatureKind> {
+        match pkey.id() {
+            Id::ED25519 => Some(SignatureKind::Ed25519),
+            Id::EC => pkey_ec_kind(pkey).map(SignatureKind::Ec),
+            _ => None,
+        }
+    }
+}
+
+impl KeyAgreementPublicKey {
+    /// Serializes the public key into a PEM-encoded SubjectPublicKeyInfo structure.
+    pub fn to_pem(&self) -> String {
+        self.pkey.to_pem()
+    }
+
+    fn pkey_kind(pkey: &PKeyRef<Public>) -> Option<KeyAgreementKind> {
+        match pkey.id() {
+            Id::X25519 => Some(KeyAgreementKind::X25519),
+            Id::EC => pkey_ec_kind(pkey).map(KeyAgreementKind::Ec),
+            _ => None,
+        }
+    }
+}
+
+impl Eq for PKeyPublicWrapper {}
+
+impl PartialEq for PKeyPublicWrapper {
+    fn eq(&self, rhs: &PKeyPublicWrapper) -> bool {
+        self.0.public_eq(&rhs.0)
+    }
+}
+
+impl PKeyPublicWrapper {
+    fn to_pem(&self) -> String {
+        String::from_utf8(self.0.public_key_to_pem().unwrap()).unwrap()
     }
 }
 
@@ -74,17 +130,25 @@ impl TryFrom<PKey<Public>> for PublicKey {
     type Error = TryFromPKeyError;
 
     fn try_from(pkey: PKey<Public>) -> Result<Self, Self::Error> {
-        let kind = pkey_kind(&pkey).ok_or(TryFromPKeyError(()))?;
-        Ok(Self { kind, pkey })
+        let kind = PublicKey::pkey_kind(&pkey).ok_or(TryFromPKeyError(()))?;
+        Ok(Self { kind, pkey: PKeyPublicWrapper(pkey) })
     }
 }
 
-fn pkey_kind<T: HasParams>(pkey: &PKeyRef<T>) -> Option<Kind> {
+impl TryFrom<PKey<Public>> for KeyAgreementPublicKey {
+    type Error = TryFromPKeyError;
+
+    fn try_from(pkey: PKey<Public>) -> Result<Self, Self::Error> {
+        let kind = KeyAgreementPublicKey::pkey_kind(&pkey).ok_or(TryFromPKeyError(()))?;
+        Ok(Self { kind, pkey: PKeyPublicWrapper(pkey) })
+    }
+}
+
+fn pkey_ec_kind<T: HasParams>(pkey: &PKeyRef<T>) -> Option<EcKind> {
     match pkey.id() {
-        Id::ED25519 => Some(Kind::Ed25519),
         Id::EC => match pkey.ec_key().unwrap().group().curve_name() {
-            Some(Nid::X9_62_PRIME256V1) => Some(Kind::Ec(EcKind::P256)),
-            Some(Nid::SECP384R1) => Some(Kind::Ec(EcKind::P384)),
+            Some(Nid::X9_62_PRIME256V1) => Some(EcKind::P256),
+            Some(Nid::SECP384R1) => Some(EcKind::P384),
             _ => None,
         },
         _ => None,
@@ -106,6 +170,7 @@ mod tests {
     fn from_ed25519_pkey() {
         let pkey = load_public_pkey(testkeys::ED25519_KEY_PEM[0]);
         let key: PublicKey = pkey.clone().try_into().unwrap();
+        assert_eq!(key.kind, SignatureKind::Ed25519);
         assert_eq!(key.to_pem().as_bytes(), pkey.public_key_to_pem().unwrap());
     }
 
@@ -113,6 +178,7 @@ mod tests {
     fn from_p256_pkey() {
         let pkey = load_public_pkey(testkeys::P256_KEY_PEM[0]);
         let key: PublicKey = pkey.clone().try_into().unwrap();
+        assert_eq!(key.kind, SignatureKind::Ec(EcKind::P256));
         assert_eq!(key.to_pem().as_bytes(), pkey.public_key_to_pem().unwrap());
     }
 
@@ -120,6 +186,7 @@ mod tests {
     fn from_p384_pkey() {
         let pkey = load_public_pkey(testkeys::P384_KEY_PEM[0]);
         let key: PublicKey = pkey.clone().try_into().unwrap();
+        assert_eq!(key.kind, SignatureKind::Ec(EcKind::P384));
         assert_eq!(key.to_pem().as_bytes(), pkey.public_key_to_pem().unwrap());
     }
 
@@ -135,8 +202,69 @@ mod tests {
         assert!(PublicKey::try_from(pkey).is_err());
     }
 
+    #[test]
+    fn from_x25519_pkey_not_supported() {
+        let pkey = load_public_pkey(testkeys::X25519_KEY_PEM[0]);
+        assert!(PublicKey::try_from(pkey).is_err());
+    }
+
+    #[test]
+    fn key_agreement_key_from_x25519_pkey() {
+        let pkey = load_public_pkey(testkeys::X25519_KEY_PEM[0]);
+        let key: KeyAgreementPublicKey = pkey.clone().try_into().unwrap();
+        assert_eq!(key.kind, KeyAgreementKind::X25519);
+        assert_eq!(key.to_pem().as_bytes(), pkey.public_key_to_pem().unwrap());
+    }
+
+    #[test]
+    fn key_agreement_key_from_p256_pkey() {
+        let pkey = load_public_pkey(testkeys::P256_KEY_PEM[0]);
+        let key: KeyAgreementPublicKey = pkey.clone().try_into().unwrap();
+        assert_eq!(key.kind, KeyAgreementKind::Ec(EcKind::P256));
+        assert_eq!(key.to_pem().as_bytes(), pkey.public_key_to_pem().unwrap());
+    }
+
+    #[test]
+    fn key_agreement_key_from_p384_pkey() {
+        let pkey = load_public_pkey(testkeys::P384_KEY_PEM[0]);
+        let key: KeyAgreementPublicKey = pkey.clone().try_into().unwrap();
+        assert_eq!(key.kind, KeyAgreementKind::Ec(EcKind::P384));
+        assert_eq!(key.to_pem().as_bytes(), pkey.public_key_to_pem().unwrap());
+    }
+
+    #[test]
+    fn key_agreement_key_from_ed25519_pkey_not_supported() {
+        let pkey = load_public_pkey(testkeys::ED25519_KEY_PEM[0]);
+        assert!(KeyAgreementPublicKey::try_from(pkey).is_err());
+    }
+
     pub fn load_public_pkey(pem: &str) -> PKey<Public> {
         testkeys::public_from_private(&PKey::private_key_from_pem(pem.as_bytes()).unwrap())
+    }
+
+    #[test]
+    fn verify_pkey_equality() {
+        let first = PKeyPublicWrapper(load_public_pkey(testkeys::ED25519_KEY_PEM[0]));
+        let second = PKeyPublicWrapper(load_public_pkey(testkeys::ED25519_KEY_PEM[0]));
+        assert_eq!(&first, &first);
+        assert_eq!(&first, &second);
+        assert_eq!(&second, &first);
+    }
+
+    #[test]
+    fn verify_key_kind_inequality() {
+        let ed25519 = PKeyPublicWrapper(load_public_pkey(testkeys::ED25519_KEY_PEM[0]));
+        let p256 = PKeyPublicWrapper(load_public_pkey(testkeys::P256_KEY_PEM[0]));
+        assert_ne!(&ed25519, &p256);
+        assert_ne!(&p256, &ed25519);
+    }
+
+    #[test]
+    fn verify_key_bits_inequality() {
+        let first = PKeyPublicWrapper(load_public_pkey(testkeys::P256_KEY_PEM[0]));
+        let second = PKeyPublicWrapper(load_public_pkey(testkeys::P256_KEY_PEM[1]));
+        assert_ne!(&first, &second);
+        assert_ne!(&second, &first);
     }
 }
 
@@ -148,18 +276,18 @@ pub(crate) mod testkeys {
     use openssl::sign::Signer;
 
     pub struct PrivateKey {
-        kind: Kind,
+        kind: SignatureKind,
         pkey: PKey<Private>,
     }
 
     impl PrivateKey {
         pub fn from_pem(pem: &str) -> Self {
             let pkey = PKey::private_key_from_pem(pem.as_bytes()).unwrap();
-            let kind = pkey_kind(&pkey).expect("unsupported private key");
+            let kind = PublicKey::pkey_kind(&pkey).expect("unsupported private key");
             Self { kind, pkey }
         }
 
-        pub(crate) fn kind(&self) -> Kind {
+        pub(crate) fn kind(&self) -> SignatureKind {
             self.kind
         }
 
@@ -169,8 +297,8 @@ pub(crate) mod testkeys {
 
         pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
             let mut signer = match self.kind {
-                Kind::Ed25519 => Signer::new_without_digest(&self.pkey)?,
-                Kind::Ec(ec) => Signer::new(digest_for_ec(ec), &self.pkey)?,
+                SignatureKind::Ed25519 => Signer::new_without_digest(&self.pkey)?,
+                SignatureKind::Ec(ec) => Signer::new(digest_for_ec(ec), &self.pkey)?,
             };
             signer.sign_oneshot_to_vec(message).context("signing message")
         }
@@ -181,6 +309,11 @@ pub(crate) mod testkeys {
         // It feels like there should be a more direct way to do this but I haven't found it.
         PKey::public_key_from_der(&pkey.public_key_to_der().unwrap()).unwrap()
     }
+
+    /// A selection of X25519 private keys.
+    pub const X25519_KEY_PEM: &[&str] = &["-----BEGIN PRIVATE KEY-----\n\
+        MC4CAQAwBQYDK2VuBCIEIMDLdDFad6CwwacwNtW/kQujlrAkxIjQ/Co3DleSd9xV\n\
+        -----END PRIVATE KEY-----\n"];
 
     /// A selection of Ed25519 private keys.
     pub const ED25519_KEY_PEM: &[&str] = &["-----BEGIN PRIVATE KEY-----\n\
