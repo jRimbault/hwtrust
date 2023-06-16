@@ -211,6 +211,25 @@ pub(crate) mod testkeys {
         -----END PRIVATE KEY-----\n",
     ];
 
+    /// A selection of EC keys that should have leading zeros in their coordinates
+    pub const P256_KEY_WITH_LEADING_ZEROS_PEM: &[&str] = &[
+        // 31 byte Y coordinate:
+        "-----BEGIN PRIVATE KEY-----\n\
+        MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCCWbRSB3imI03F5YNVq\n\
+        8AN8ZbyzW/h+5BQ53caD5VkWJg==\n\
+        -----END PRIVATE KEY-----\n",
+        // 31 byte X coordinate:
+        "-----BEGIN PRIVATE KEY-----\n\
+        MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCDe5E5WqNmCLxtsCNTc\n\
+        UOb9CPXCn6l3CZpbrp0aivb+Bw==\n\
+        -----END PRIVATE KEY-----\n",
+        // X & Y both have MSB set, and some stacks will add a padding byte
+        "-----BEGIN PRIVATE KEY-----\n\
+        MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCCWOWcXPDEVZ4Qz3EBK\n\
+        uvSqhD9HmxDGxcNe3yxKi9pazw==\n\
+        -----END PRIVATE KEY-----\n",
+    ];
+
     /// A selection of elliptic curve P-384 private keys.
     pub const P384_KEY_PEM: &[&str] = &["-----BEGIN PRIVATE KEY-----\n\
         MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDBMZ414LiUpcuNTNq5W\n\
@@ -218,6 +237,25 @@ pub(crate) mod testkeys {
         GldmGksI5g82hjPRYscWNs/6pFxQTMcxABE+/1lWaryLR193ZD74VxVRIKDBluRs\n\
         uuHi+VayOreTX1/qlUoxgBT+XTI0nTdLn6WwO6vVO1NIkGEVnYvB2eM=\n\
         -----END PRIVATE KEY-----\n"];
+
+    /// A selection of EC keys that should have leading zeros in their coordinates
+    pub const P384_KEY_WITH_LEADING_ZEROS_PEM: &[&str] = &[
+        // 47 byte Y coordinate:
+        "-----BEGIN PRIVATE KEY-----\n\
+        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDCzgVHCz7wgmSdb7/IixYik\n\
+        3AuQceCtBTiFrJpgpGFluwgLUR0S2NpzIuty4M7xU74=\n\
+        -----END PRIVATE KEY-----\n",
+        // 47 byte X coordinate:
+        "-----BEGIN PRIVATE KEY-----\n\
+        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDBoW+8zbvwf5fYOS8YPyPEH\n\
+        jHP71Vr1MnRYRp/yG1wbthW2XEu0UWbp4qrZ5WTnZPg=\n\
+        -----END PRIVATE KEY-----\n",
+        // X & Y both have MSB set, and some stacks will add a padding byte
+        "-----BEGIN PRIVATE KEY-----\n\
+        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDD2A69j5M/6oc6/WGoYln4t\n\
+        Alnn0C6kpJz1EVC+eH6y0YNrcGamz8pPY4NkzUB/tj4=\n\
+        -----END PRIVATE KEY-----\n",
+    ];
 
     /// A selection of elliptic curve P-521 private keys.
     pub const P521_KEY_PEM: &[&str] = &["-----BEGIN PRIVATE KEY-----\n\
