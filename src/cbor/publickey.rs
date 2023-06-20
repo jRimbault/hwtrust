@@ -61,11 +61,14 @@ impl PublicKey {
                 key.public_key()
                     .affine_coordinates_gfp(group, &mut x, &mut y, &mut ctx)
                     .context("Get EC coordinates")?;
-                let crv = match ec {
-                    EcKind::P256 => iana::EllipticCurve::P_256,
-                    EcKind::P384 => iana::EllipticCurve::P_384,
+                let (crv, coord_len) = match ec {
+                    EcKind::P256 => (iana::EllipticCurve::P_256, 32),
+                    EcKind::P384 => (iana::EllipticCurve::P_384, 48),
                 };
-                CoseKeyBuilder::new_ec2_pub_key(crv, x.to_vec(), y.to_vec())
+
+                let x = adjust_coord(x.to_vec(), coord_len);
+                let y = adjust_coord(y.to_vec(), coord_len);
+                CoseKeyBuilder::new_ec2_pub_key(crv, x, y)
             }
         };
         Ok(builder
@@ -73,6 +76,21 @@ impl PublicKey {
             .add_key_op(iana::KeyOperation::Verify)
             .build())
     }
+}
+
+fn adjust_coord(mut coordinate: Vec<u8>, length: usize) -> Vec<u8> {
+    // Use loops "just in case". However we should never see a coordinate with more than one
+    // extra leading byte. The chances of more than one trailing byte is also quite small --
+    // roughly 1/65000.
+    while coordinate.len() > length && coordinate[0] == 00 {
+        coordinate.remove(0);
+    }
+
+    while coordinate.len() < length {
+        coordinate.insert(0, 0);
+    }
+
+    coordinate
 }
 
 fn pkey_from_okp_key(cose_key: &CoseKey) -> Result<PKey<Public>> {
@@ -158,7 +176,10 @@ fn iana_algorithm(kind: Kind) -> iana::Algorithm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM};
+    use crate::publickey::testkeys::{
+        PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM, P256_KEY_WITH_LEADING_ZEROS_PEM,
+        P384_KEY_WITH_LEADING_ZEROS_PEM,
+    };
     use coset::{CoseSign1Builder, HeaderBuilder};
 
     impl PrivateKey {
@@ -268,5 +289,41 @@ mod tests {
         let value = key.to_cose_key().unwrap();
         let new_key = PublicKey::from_cose_key(&value).unwrap();
         assert!(key.pkey().public_eq(new_key.pkey()));
+    }
+
+    #[test]
+    fn from_p256_pkey_with_leading_zeros() {
+        for pem in P256_KEY_WITH_LEADING_ZEROS_PEM {
+            let key = PrivateKey::from_pem(pem).public_key();
+            let cose_key = key.to_cose_key().unwrap();
+
+            let x =
+                get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::X.to_i64()))
+                    .unwrap();
+            assert_eq!(x.len(), 32, "X coordinate is the wrong size\n{}", pem);
+
+            let y =
+                get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::Y.to_i64()))
+                    .unwrap();
+            assert_eq!(y.len(), 32, "Y coordinate is the wrong size\n{}", pem);
+        }
+    }
+
+    #[test]
+    fn from_p384_pkey_with_leading_zeros() {
+        for pem in P384_KEY_WITH_LEADING_ZEROS_PEM {
+            let key = PrivateKey::from_pem(pem).public_key();
+            let cose_key = key.to_cose_key().unwrap();
+
+            let x =
+                get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::X.to_i64()))
+                    .unwrap();
+            assert_eq!(x.len(), 48, "X coordinate is the wrong size\n{}", pem);
+
+            let y =
+                get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::Y.to_i64()))
+                    .unwrap();
+            assert_eq!(y.len(), 48, "Y coordinate is the wrong size\n{}", pem);
+        }
     }
 }
