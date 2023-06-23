@@ -1,7 +1,9 @@
 use anyhow::anyhow;
+use hex;
+use std::fmt;
 
 #[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 /// Describes a device that is registered with the RKP backend. This implementation contains fields
 /// common to all versions defined in DeviceInfo.aidl.
 pub struct DeviceInfo {
@@ -37,6 +39,31 @@ pub struct DeviceInfo {
     pub security_level: Option<DeviceInfoSecurityLevel>,
     /// Whether or not secure boot is enforced/required by the SoC.
     pub fused: bool,
+}
+
+impl fmt::Debug for DeviceInfo {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let security_level: &dyn fmt::Debug = self.security_level.as_ref().map_or(&"<none>", |s| s);
+        let os_version: &dyn fmt::Debug = self.os_version.as_ref().map_or(&"<none>", |v| v);
+
+        fmt.debug_struct("DeviceInfo")
+            .field("version", &self.version)
+            .field("brand", &self.brand)
+            .field("manufacturer", &self.manufacturer)
+            .field("product", &self.product)
+            .field("model", &self.model)
+            .field("device", &self.device)
+            .field("vb_state", &self.vb_state)
+            .field("bootloader_state", &self.bootloader_state)
+            .field("vbmeta_digest", &hex::encode(&self.vbmeta_digest))
+            .field("os_version", os_version)
+            .field("system_patch_level", &self.system_patch_level)
+            .field("boot_patch_level", &self.boot_patch_level)
+            .field("vendor_patch_level", &self.vendor_patch_level)
+            .field("security_level", security_level)
+            .field("fused", &self.fused)
+            .finish()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

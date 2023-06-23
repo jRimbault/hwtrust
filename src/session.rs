@@ -1,6 +1,7 @@
 //! Defines the context type for a session handling hwtrust data structures.
 
 /// The context for a session handling hwtrust data structures.
+#[derive(Default)]
 pub struct Session {
     /// Options that control the behaviour during this session.
     pub options: Options,
