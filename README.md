@@ -32,3 +32,14 @@ hwtrust verify-dice-chain chain.bin
 ```
 
 The exit code is zero if the chain passed verification and non-zero otherwise.
+
+### Verifying Factory Certificate Signing Requests
+
+The `rkp_factory_extraction_tool` is used in the manufacturing process to capture
+a "CSR" that contains a full DICE chain and other device properties. The `factory-csr`
+subcommand parses and validates the output of `rkp_factory_extraction_tool`.
+
+
+```shell
+hwtrust factory-csr csr.json
+```
