@@ -13,10 +13,16 @@ pub enum FieldValueError {
     NotString(&'static str, Value),
     #[error("expected null for field {0}, but found `{1:?}`")]
     NotNull(&'static str, Value),
+    #[error("expected u32 for field {0}, but found `{1:?}`")]
+    NotU32(&'static str, Value),
     #[error("expected i64 for field {0}, but found `{1:?}`")]
     NotI64(&'static str, Value),
     #[error("expected u64 for field {0}, but found `{1:?}`")]
     NotU64(&'static str, Value),
+    #[error("expected boolean for field {0}, but found `{1:?}`")]
+    NotBool(&'static str, Value),
+    #[error("field {0} may be set only once; encountered multiple values: `{1:?}`, `{2:?}`")]
+    DuplicateField(&'static str, Value, Value),
 }
 
 pub(super) struct FieldValue {
@@ -29,16 +35,16 @@ impl FieldValue {
         Self { name, value: None }
     }
 
-    pub fn name(&self) -> &str {
-        self.name
-    }
-
-    pub fn get(&self) -> &Option<Value> {
-        &self.value
-    }
-
-    pub fn set(&mut self, value: Value) {
-        self.value = Some(value)
+    pub fn set_once(&mut self, value: Value) -> Result<(), FieldValueError> {
+        match &self.value {
+            None => {
+                self.value = Some(value);
+                Ok(())
+            }
+            Some(previous) => {
+                Err(FieldValueError::DuplicateField(self.name, previous.clone(), value))
+            }
+        }
     }
 
     pub fn is_bytes(&self) -> bool {
@@ -71,6 +77,21 @@ impl FieldValue {
         require_present(self.name, self.into_optional_string())
     }
 
+    pub fn into_bool(self) -> Result<bool, FieldValueError> {
+        require_present(self.name, self.into_optional_bool())
+    }
+
+    pub fn into_optional_bool(self) -> Result<Option<bool>, FieldValueError> {
+        self.value
+            .map(|v| match v {
+                Value::Bool(b) => Ok(b),
+                Value::Integer(i) if i == 0.into() => Ok(false),
+                Value::Integer(i) if i == 1.into() => Ok(true),
+                _ => Err(FieldValueError::NotBool(self.name, v)),
+            })
+            .transpose()
+    }
+
     pub fn is_null(&self) -> Result<bool, FieldValueError> {
         // If there's no value, return false; if there is a null value, return true; anything else
         // is an error.
@@ -85,6 +106,20 @@ impl FieldValue {
 
     pub fn is_integer(&self) -> bool {
         self.value.as_ref().map_or(false, |v| v.is_integer())
+    }
+
+    pub fn into_u32(self) -> Result<u32, FieldValueError> {
+        require_present(self.name, self.into_optional_u32())
+    }
+
+    pub fn into_optional_u32(self) -> Result<Option<u32>, FieldValueError> {
+        self.value
+            .map(|v| {
+                let value =
+                    if let Value::Integer(i) = v { i128::from(i).try_into().ok() } else { None };
+                value.ok_or_else(|| FieldValueError::NotU32(self.name, v))
+            })
+            .transpose()
     }
 
     pub fn into_optional_i64(self) -> Result<Option<i64>, FieldValueError> {
