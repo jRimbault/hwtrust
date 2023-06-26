@@ -122,15 +122,7 @@ impl PayloadFields {
                     KEY_USAGE => &mut key_usage,
                     _ => bail!("Unknown key {}", key),
                 };
-                match field.get() {
-                    Some(existing) => bail!(
-                        "duplicate values for {}: {:?} and {:?}",
-                        field.name(),
-                        existing,
-                        value
-                    ),
-                    None => field.set(value),
-                }
+                field.set_once(value)?
             } else {
                 bail!("Invalid key: {:?}", key);
             }
@@ -273,12 +265,7 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
                     }
                 },
             };
-            match field.get() {
-                Some(existing) => {
-                    bail!("duplicate values for {}: {:?} and {:?}", field.name(), existing, value)
-                }
-                None => field.set(value),
-            }
+            field.set_once(value)?
         } else {
             bail!("Invalid key: {:?}", key);
         }
