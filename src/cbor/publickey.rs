@@ -66,8 +66,8 @@ impl PublicKey {
                     EcKind::P384 => (iana::EllipticCurve::P_384, 48),
                 };
 
-                let x = adjust_coord(x.to_vec(), coord_len);
-                let y = adjust_coord(y.to_vec(), coord_len);
+                let x = adjust_coord(x.to_vec(), coord_len)?;
+                let y = adjust_coord(y.to_vec(), coord_len)?;
                 CoseKeyBuilder::new_ec2_pub_key(crv, x, y)
             }
         };
@@ -78,11 +78,12 @@ impl PublicKey {
     }
 }
 
-fn adjust_coord(mut coordinate: Vec<u8>, length: usize) -> Vec<u8> {
+fn adjust_coord(mut coordinate: Vec<u8>, length: usize) -> Result<Vec<u8>> {
     // Use loops "just in case". However we should never see a coordinate with more than one
     // extra leading byte. The chances of more than one trailing byte is also quite small --
     // roughly 1/65000.
-    while coordinate.len() > length && coordinate[0] == 00 {
+    while coordinate.len() > length {
+        ensure!(coordinate[0] == 0, "unexpected non-zero leading byte on public key");
         coordinate.remove(0);
     }
 
@@ -90,7 +91,7 @@ fn adjust_coord(mut coordinate: Vec<u8>, length: usize) -> Vec<u8> {
         coordinate.insert(0, 0);
     }
 
-    coordinate
+    Ok(coordinate)
 }
 
 fn pkey_from_okp_key(cose_key: &CoseKey) -> Result<PKey<Public>> {
