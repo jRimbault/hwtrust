@@ -110,6 +110,11 @@ impl Options {
 
     /// The options use by VSR 15.
     pub fn vsr15() -> Self {
+        Self { dice_chain_config_hash_unverified: true, ..Options::default() }
+    }
+
+    /// The options use by VSR 16.
+    pub fn vsr16() -> Self {
         Options::default()
     }
 }
