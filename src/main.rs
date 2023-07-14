@@ -50,6 +50,8 @@ enum VsrVersion {
     Vsr14,
     /// VSR 15 / Android V / 2024
     Vsr15,
+    /// VSR 16 / Android W / 2025
+    Vsr16,
 }
 
 fn main() -> Result<()> {
@@ -60,6 +62,18 @@ fn main() -> Result<()> {
             Some(VsrVersion::Vsr13) => Options::vsr13(),
             Some(VsrVersion::Vsr14) => Options::vsr14(),
             Some(VsrVersion::Vsr15) => Options::vsr15(),
+            Some(VsrVersion::Vsr16) => {
+                println!();
+                println!();
+                println!("  ********************************************************************");
+                println!("  ! The selected VSR is not finalized and is subject to change.      !");
+                println!("  ! Please contact your TAM if you intend to depend on the           !");
+                println!("  ! validation rules use for the selected VSR.                       !");
+                println!("  ********************************************************************");
+                println!();
+                println!();
+                Options::vsr16()
+            }
             None => Options::default(),
         },
     };
