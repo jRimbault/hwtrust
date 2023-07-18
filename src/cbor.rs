@@ -3,7 +3,7 @@
 mod dice;
 mod field_value;
 mod publickey;
-mod rkp;
+pub(crate) mod rkp;
 
 use ciborium::{de::from_reader, value::Value};
 use std::io::Read;
