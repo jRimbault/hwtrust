@@ -1,6 +1,6 @@
 //! This module defines a helper for parsing fields in a CBOR map.
 
-use coset::cbor::value::Value;
+use coset::{cbor::value::Value, AsCborValue, CoseError, CoseSign1};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -21,6 +21,12 @@ pub enum FieldValueError {
     NotU64(&'static str, Value),
     #[error("expected boolean for field {0}, but found `{1:?}`")]
     NotBool(&'static str, Value),
+    #[error("expected map for field {0}, but found `{1:?}`")]
+    NotMap(&'static str, Value),
+    #[error("expected array for field {0}, but found `{1:?}`")]
+    NotArray(&'static str, Value),
+    #[error("unable to parse field {0} as COSE_sign1: `{1:?}`")]
+    CoseSign1ParseError(&'static str, CoseError),
     #[error("field {0} may be set only once; encountered multiple values: `{1:?}`, `{2:?}`")]
     DuplicateField(&'static str, Value, Value),
 }
@@ -33,6 +39,10 @@ pub(super) struct FieldValue {
 impl FieldValue {
     pub fn new(name: &'static str) -> Self {
         Self { name, value: None }
+    }
+
+    pub fn from_optional_value(name: &'static str, value: Option<Value>) -> Self {
+        Self { name, value }
     }
 
     pub fn set_once(&mut self, value: Value) -> Result<(), FieldValueError> {
@@ -75,6 +85,33 @@ impl FieldValue {
 
     pub fn into_string(self) -> Result<String, FieldValueError> {
         require_present(self.name, self.into_optional_string())
+    }
+
+    pub fn into_cose_sign1(self) -> Result<CoseSign1, FieldValueError> {
+        require_present(self.name, self.into_optional_cose_sign1())
+    }
+
+    pub fn into_optional_cose_sign1(self) -> Result<Option<CoseSign1>, FieldValueError> {
+        self.value
+            .map(|v| match v {
+                Value::Array(_) => CoseSign1::from_cbor_value(v)
+                    .map_err(|e| FieldValueError::CoseSign1ParseError(self.name, e)),
+                _ => Err(FieldValueError::NotArray(self.name, v)),
+            })
+            .transpose()
+    }
+
+    pub fn into_map(self) -> Result<Vec<(Value, Value)>, FieldValueError> {
+        require_present(self.name, self.into_optional_map())
+    }
+
+    pub fn into_optional_map(self) -> Result<Option<Vec<(Value, Value)>>, FieldValueError> {
+        self.value
+            .map(|v| match v {
+                Value::Map(v) => Ok(v),
+                _ => Err(FieldValueError::NotMap(self.name, v)),
+            })
+            .transpose()
     }
 
     pub fn into_bool(self) -> Result<bool, FieldValueError> {
