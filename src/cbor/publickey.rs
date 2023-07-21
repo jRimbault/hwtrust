@@ -1,6 +1,6 @@
 //! CBOR encoding and decoding of a [`PublicKey`].
 
-use crate::publickey::{EcKind, Kind, PublicKey};
+use crate::publickey::{EcKind, PublicKey, SignatureKind};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use coset::cbor::value::Value;
 use coset::iana::{self, EnumI64};
@@ -33,7 +33,7 @@ impl PublicKey {
             "Algorithm mistmatch in protected header"
         );
         sign1.verify_signature(b"", |signature, message| match self.kind() {
-            Kind::Ec(k) => {
+            SignatureKind::Ec(k) => {
                 let der = ec_cose_signature_to_der(k, signature).context("Signature to DER")?;
                 self.verify(&der, message)
             }
@@ -44,7 +44,7 @@ impl PublicKey {
     /// Convert the public key into a [`CoseKey`].
     pub fn to_cose_key(&self) -> Result<CoseKey> {
         let builder = match self.kind() {
-            Kind::Ed25519 => {
+            SignatureKind::Ed25519 => {
                 let label_crv = iana::OkpKeyParameter::Crv.to_i64();
                 let label_x = iana::OkpKeyParameter::X.to_i64();
                 let x = self.pkey().raw_public_key().context("Get ed25519 raw public key")?;
@@ -52,7 +52,7 @@ impl PublicKey {
                     .param(label_crv, Value::from(iana::EllipticCurve::Ed25519.to_i64()))
                     .param(label_x, Value::from(x))
             }
-            Kind::Ec(ec) => {
+            SignatureKind::Ec(ec) => {
                 let key = self.pkey().ec_key().unwrap();
                 let group = key.group();
                 let mut ctx = BigNumContext::new().context("Failed to create bignum context")?;
@@ -96,11 +96,21 @@ fn adjust_coord(mut coordinate: Vec<u8>, length: usize) -> Result<Vec<u8>> {
 
 fn pkey_from_okp_key(cose_key: &CoseKey) -> Result<PKey<Public>> {
     ensure!(cose_key.kty == KeyType::Assigned(iana::KeyType::OKP));
-    ensure!(cose_key.alg == Some(Algorithm::Assigned(iana::Algorithm::EdDSA)));
+    ensure!(
+        cose_key.alg == Some(Algorithm::Assigned(iana::Algorithm::EdDSA))
+            || cose_key.alg == Some(Algorithm::Assigned(iana::Algorithm::ECDH_ES_HKDF_256))
+    );
+    //ensure!(cose_key.alg == Some(Algorithm::Assigned(iana::Algorithm::EdDSA)));
     let crv = get_label_value(cose_key, Label::Int(iana::OkpKeyParameter::Crv.to_i64()))?;
     let x = get_label_value_as_bytes(cose_key, Label::Int(iana::OkpKeyParameter::X.to_i64()))?;
-    ensure!(crv == &Value::from(iana::EllipticCurve::Ed25519.to_i64()));
-    PKey::public_key_from_raw_bytes(x, Id::ED25519).context("Failed to instantiate key")
+    let curve_id = if crv == &Value::from(iana::EllipticCurve::Ed25519.to_i64()) {
+        Id::ED25519
+    } else if crv == &Value::from(iana::EllipticCurve::X25519.to_i64()) {
+        Id::X25519
+    } else {
+        bail!("Given crv is invalid: '{crv:?}'");
+    };
+    PKey::public_key_from_raw_bytes(x, curve_id).context("Failed to instantiate key")
 }
 
 fn pkey_from_ec2_key(cose_key: &CoseKey) -> Result<PKey<Public>> {
@@ -109,7 +119,8 @@ fn pkey_from_ec2_key(cose_key: &CoseKey) -> Result<PKey<Public>> {
     let x = get_label_value_as_bytes(cose_key, Label::Int(iana::Ec2KeyParameter::X.to_i64()))?;
     let y = get_label_value_as_bytes(cose_key, Label::Int(iana::Ec2KeyParameter::Y.to_i64()))?;
     match cose_key.alg {
-        Some(Algorithm::Assigned(iana::Algorithm::ES256)) => {
+        Some(Algorithm::Assigned(iana::Algorithm::ES256))
+        | Some(Algorithm::Assigned(iana::Algorithm::ECDH_ES_HKDF_256)) => {
             ensure!(crv == &Value::from(iana::EllipticCurve::P_256.to_i64()));
             pkey_from_ec_coords(Nid::X9_62_PRIME256V1, x, y).context("Failed to instantiate key")
         }
@@ -117,7 +128,7 @@ fn pkey_from_ec2_key(cose_key: &CoseKey) -> Result<PKey<Public>> {
             ensure!(crv == &Value::from(iana::EllipticCurve::P_384.to_i64()));
             pkey_from_ec_coords(Nid::SECP384R1, x, y).context("Failed to instantiate key")
         }
-        _ => bail!("Need to specify ES256 or ES384 in the key. Got {:?}", cose_key.alg),
+        _ => bail!("Need to specify ES256 or ES384 key algorithm. Got {:?}", cose_key.alg),
     }
 }
 
@@ -166,11 +177,11 @@ fn ec_coord_len(kind: EcKind) -> usize {
     }
 }
 
-fn iana_algorithm(kind: Kind) -> iana::Algorithm {
+fn iana_algorithm(kind: SignatureKind) -> iana::Algorithm {
     match kind {
-        Kind::Ed25519 => iana::Algorithm::EdDSA,
-        Kind::Ec(EcKind::P256) => iana::Algorithm::ES256,
-        Kind::Ec(EcKind::P384) => iana::Algorithm::ES384,
+        SignatureKind::Ed25519 => iana::Algorithm::EdDSA,
+        SignatureKind::Ec(EcKind::P256) => iana::Algorithm::ES256,
+        SignatureKind::Ec(EcKind::P384) => iana::Algorithm::ES384,
     }
 }
 
@@ -191,7 +202,7 @@ mod tests {
                 .create_signature(b"", |m| {
                     let signature = self.sign(m).unwrap();
                     match self.kind() {
-                        Kind::Ec(ec) => ec_der_signature_to_cose(ec, &signature),
+                        SignatureKind::Ec(ec) => ec_der_signature_to_cose(ec, &signature),
                         _ => signature,
                     }
                 })
