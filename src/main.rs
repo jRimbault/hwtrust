@@ -1,10 +1,12 @@
 //! A tool for handling data related to the hardware root-of-trust.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use hwtrust::dice;
+use hwtrust::rkp;
 use hwtrust::session::{Options, Session};
-use std::fs;
+use std::io::BufRead;
+use std::{fs, io};
 
 #[derive(Parser)]
 /// A tool for handling data related to the hardware root-of-trust
@@ -12,11 +14,22 @@ use std::fs;
 struct Args {
     #[clap(subcommand)]
     action: Action,
+
+    /// Verbose output, including parsed data structures.
+    #[clap(long)]
+    verbose: bool,
+
+    /// The VSR version to validate against. If omitted, the set of rules that are used have no
+    /// compromises or workarounds and new implementations should validate against them as it will
+    /// be the basis for future VSR versions.
+    #[clap(long, value_enum)]
+    vsr: Option<VsrVersion>,
 }
 
 #[derive(Subcommand)]
 enum Action {
     VerifyDiceChain(VerifyDiceChainArgs),
+    FactoryCsr(FactoryCsrArgs),
 }
 
 #[derive(Parser)]
@@ -28,18 +41,18 @@ enum Action {
 /// [1] -- https://cs.android.com/android/platform/superproject/+/master:hardware/interfaces/security/rkp/aidl/android/hardware/security/keymint/IRemotelyProvisionedComponent.aidl
 /// [2] -- https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/specification.md
 struct VerifyDiceChainArgs {
-    /// Dump the DICE chain on the standard output
-    #[clap(long)]
-    dump: bool,
-
     /// Path to a file containing a DICE chain
     chain: String,
+}
 
-    /// The VSR version to validate against. If omitted, the set of rules that are used have no
-    /// compromises or workarounds and new implementations should validate against them as it will
-    /// be the basis for future VSR versions.
-    #[clap(long, value_enum)]
-    vsr: Option<VsrVersion>,
+#[derive(Parser)]
+/// Parse and verify a CSR, as gnerated by the rkp_factory_extraction_tool. "v1" CSRs are also
+/// decrypted using the factory EEK.
+struct FactoryCsrArgs {
+    /// Path to a file containing one or more CSRs, in the "csr+json" format as defined by
+    /// rkp_factory_extraction_tool. Each line is interpreted as a separate JSON blob containing
+    /// a base64-encoded CSR.
+    csr_file: String,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -54,11 +67,9 @@ enum VsrVersion {
     Vsr16,
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-    let Action::VerifyDiceChain(sub_args) = args.action;
-    let session = Session {
-        options: match sub_args.vsr {
+fn session_from_vsr(vsr: Option<VsrVersion>) -> Session {
+    Session {
+        options: match vsr {
             Some(VsrVersion::Vsr13) => Options::vsr13(),
             Some(VsrVersion::Vsr14) => Options::vsr14(),
             Some(VsrVersion::Vsr15) => Options::vsr15(),
@@ -76,11 +87,45 @@ fn main() -> Result<()> {
             }
             None => Options::default(),
         },
-    };
-    let chain = dice::Chain::from_cbor(&session, &fs::read(sub_args.chain)?)?;
+    }
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    match &args.action {
+        Action::VerifyDiceChain(sub_args) => verify_dice_chain(&args, sub_args)?,
+        Action::FactoryCsr(sub_args) => parse_factory_csr(&args, sub_args)?,
+    }
     println!("Success!");
-    if sub_args.dump {
+    Ok(())
+}
+
+fn verify_dice_chain(args: &Args, sub_args: &VerifyDiceChainArgs) -> Result<()> {
+    let session = session_from_vsr(args.vsr);
+    let chain = dice::Chain::from_cbor(&session, &fs::read(&sub_args.chain)?)?;
+    if args.verbose {
         print!("{}", chain);
+    }
+    Ok(())
+}
+
+fn parse_factory_csr(args: &Args, sub_args: &FactoryCsrArgs) -> Result<()> {
+    let session = session_from_vsr(args.vsr);
+    let input = &fs::File::open(&sub_args.csr_file)?;
+    let mut csr_count = 0;
+    for line in io::BufReader::new(input).lines() {
+        let line = line?;
+        if line.is_empty() {
+            continue;
+        }
+        let csr = rkp::FactoryCsr::from_json(&session, &line)?;
+        csr_count += 1;
+        if args.verbose {
+            println!("{csr_count}: {csr:#?}");
+        }
+    }
+    if csr_count == 0 {
+        bail!("No CSRs found in the input file '{}'", sub_args.csr_file);
     }
     Ok(())
 }
