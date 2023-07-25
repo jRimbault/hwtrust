@@ -5,6 +5,7 @@ use coset::CborSerializable;
 use hwtrust::dice::ChainForm;
 use hwtrust::session::{Options, Session};
 
+#[allow(unsafe_op_in_unsafe_fn)]
 #[cxx::bridge(namespace = "hwtrust::rust")]
 mod ffi {
     /// The set of validation rules to apply.
