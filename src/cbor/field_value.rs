@@ -1,6 +1,6 @@
 //! This module defines a helper for parsing fields in a CBOR map.
 
-use coset::{cbor::value::Value, AsCborValue, CoseError, CoseSign1};
+use coset::{cbor::value::Value, AsCborValue, CoseEncrypt, CoseError, CoseMac0, CoseSign1};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -25,8 +25,12 @@ pub enum FieldValueError {
     NotMap(&'static str, Value),
     #[error("expected array for field {0}, but found `{1:?}`")]
     NotArray(&'static str, Value),
-    #[error("unable to parse field {0} as COSE_sign1: `{1:?}`")]
+    #[error("unable to parse field {0} as COSE_Sign1: `{1:?}`")]
     CoseSign1ParseError(&'static str, CoseError),
+    #[error("unable to parse field {0} as COSE_Encrypt: `{1:?}`")]
+    CoseEncryptParseError(&'static str, CoseError),
+    #[error("unable to parse field {0} as COSE_Mac0: `{1:?}`")]
+    CoseMac0ParseError(&'static str, CoseError),
     #[error("field {0} may be set only once; encountered multiple values: `{1:?}`, `{2:?}`")]
     DuplicateField(&'static str, Value, Value),
 }
@@ -87,6 +91,34 @@ impl FieldValue {
         require_present(self.name, self.into_optional_string())
     }
 
+    pub fn into_cose_encrypt(self) -> Result<CoseEncrypt, FieldValueError> {
+        require_present(self.name, self.into_optional_cose_encrypt())
+    }
+
+    pub fn into_optional_cose_encrypt(self) -> Result<Option<CoseEncrypt>, FieldValueError> {
+        self.value
+            .map(|v| match v {
+                Value::Array(_) => CoseEncrypt::from_cbor_value(v)
+                    .map_err(|e| FieldValueError::CoseEncryptParseError(self.name, e)),
+                _ => Err(FieldValueError::NotArray(self.name, v)),
+            })
+            .transpose()
+    }
+
+    pub fn into_cose_mac0(self) -> Result<CoseMac0, FieldValueError> {
+        require_present(self.name, self.into_optional_cose_mac0())
+    }
+
+    pub fn into_optional_cose_mac0(self) -> Result<Option<CoseMac0>, FieldValueError> {
+        self.value
+            .map(|v| match v {
+                Value::Array(_) => CoseMac0::from_cbor_value(v)
+                    .map_err(|e| FieldValueError::CoseMac0ParseError(self.name, e)),
+                _ => Err(FieldValueError::NotArray(self.name, v)),
+            })
+            .transpose()
+    }
+
     pub fn into_cose_sign1(self) -> Result<CoseSign1, FieldValueError> {
         require_present(self.name, self.into_optional_cose_sign1())
     }
@@ -96,6 +128,19 @@ impl FieldValue {
             .map(|v| match v {
                 Value::Array(_) => CoseSign1::from_cbor_value(v)
                     .map_err(|e| FieldValueError::CoseSign1ParseError(self.name, e)),
+                _ => Err(FieldValueError::NotArray(self.name, v)),
+            })
+            .transpose()
+    }
+
+    pub fn into_array(self) -> Result<Vec<Value>, FieldValueError> {
+        require_present(self.name, self.into_optional_array())
+    }
+
+    pub fn into_optional_array(self) -> Result<Option<Vec<Value>>, FieldValueError> {
+        self.value
+            .map(|v| match v {
+                Value::Array(v) => Ok(v),
                 _ => Err(FieldValueError::NotArray(self.name, v)),
             })
             .transpose()

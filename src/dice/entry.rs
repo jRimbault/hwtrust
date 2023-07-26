@@ -18,7 +18,7 @@ pub enum DiceMode {
 }
 
 /// The payload of a DICE chain entry.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Payload {
     issuer: String,
     subject: String,
