@@ -25,6 +25,12 @@ Result<DiceChain> DiceChain::Verify(const std::vector<uint8_t>& chain, DiceChain
     case DiceChain::Kind::kVsr14:
       chainKind = rust::DiceChainKind::Vsr14;
       break;
+    case DiceChain::Kind::kVsr15:
+      chainKind = rust::DiceChainKind::Vsr15;
+      break;
+    case DiceChain::Kind::kVsr16:
+      chainKind = rust::DiceChainKind::Vsr16;
+      break;
   }
   auto res = rust::VerifyDiceChain({chain.data(), chain.size()}, chainKind);
   if (!res.error.empty()) {

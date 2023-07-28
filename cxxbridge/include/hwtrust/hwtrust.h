@@ -15,6 +15,8 @@ public:
   enum class Kind {
     kVsr13,
     kVsr14,
+    kVsr15,
+    kVsr16,
   };
 
   static android::base::Result<DiceChain> Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind) noexcept;
