@@ -12,7 +12,15 @@ impl ChainForm {
     /// Decode and validate a CBOR-encoded DICE chain. The form of chain is inferred from the
     /// structure of the data.
     pub fn from_cbor(session: &Session, bytes: &[u8]) -> Result<Self> {
-        let (root_public_key, it) = root_and_entries_from_cbor(session, bytes)?;
+        Self::from_value(
+            session,
+            value_from_bytes(bytes).context("Unable to decode top-level CBOR")?,
+        )
+    }
+
+    /// Similar to `from_cbor`, except it accepts an already-parsed Value instead of raw CBOR.
+    pub fn from_value(session: &Session, value: Value) -> Result<Self> {
+        let (root_public_key, it) = root_and_entries_from_value(session, value)?;
 
         if it.len() == 1 {
             // The chain could be degenerate so interpret it as such until it's seen to be more
@@ -42,7 +50,16 @@ impl Chain {
     /// extracted. This does not perform any semantic validation of the data in the
     /// certificates such as the Authority, Config and Code hashes.
     pub fn from_cbor(session: &Session, bytes: &[u8]) -> Result<Self> {
-        let (root_public_key, it) = root_and_entries_from_cbor(session, bytes)?;
+        Self::from_value(
+            session,
+            value_from_bytes(bytes).context("Unable to decode top-level CBOR")?,
+        )
+    }
+
+    /// Decode and validate a Chain from a parsed CBOR Value. This is functionally similar
+    /// to `Self::from_cbor`, except that it accepts an already-parsed CBOR Value.
+    pub fn from_value(session: &Session, value: Value) -> Result<Self> {
+        let (root_public_key, it) = root_and_entries_from_value(session, value)?;
         Self::from_root_and_entries(session, root_public_key, it)
     }
 
@@ -71,11 +88,10 @@ impl Chain {
     }
 }
 
-fn root_and_entries_from_cbor(
+fn root_and_entries_from_value(
     session: &Session,
-    bytes: &[u8],
+    value: Value,
 ) -> Result<(PublicKey, std::vec::IntoIter<Value>)> {
-    let value = value_from_bytes(bytes).context("Unable to decode top-level CBOR")?;
     let array = match value {
         Value::Array(array) if array.len() >= 2 => array,
         _ => bail!("Expected an array of at least length 2, found: {:?}", value),
@@ -125,6 +141,15 @@ mod tests {
     }
 
     #[test]
+    fn check_chain_valid_ed25519_value() {
+        let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
+        let chain = value_from_bytes(&chain).unwrap();
+        let session = Session { options: Options::default() };
+        let chain = Chain::from_value(&session, chain).unwrap();
+        assert_eq!(chain.payloads().len(), 8);
+    }
+
+    #[test]
     fn check_chain_valid_p256() {
         let chain = fs::read("testdata/dice/valid_p256.chain").unwrap();
         let session = Session {
@@ -132,6 +157,23 @@ mod tests {
         };
         let chain = Chain::from_cbor(&session, &chain).unwrap();
         assert_eq!(chain.payloads().len(), 3);
+    }
+
+    #[test]
+    fn check_chain_valid_p256_value() {
+        let chain = fs::read("testdata/dice/valid_p256.chain").unwrap();
+        let chain = value_from_bytes(&chain).unwrap();
+        let session = Session {
+            options: Options { dice_chain_config_hash_unverified: true, ..Options::default() },
+        };
+        let chain = Chain::from_value(&session, chain).unwrap();
+        assert_eq!(chain.payloads().len(), 3);
+    }
+
+    #[test]
+    fn check_chain_wrong_value_type() {
+        let session = Session { options: Options::default() };
+        Chain::from_value(&session, Value::Float(1.234)).unwrap_err();
     }
 
     #[test]
