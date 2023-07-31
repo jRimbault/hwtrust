@@ -26,13 +26,13 @@ impl PublicKey {
 
     /// Verifies a COSE_Sign1 signature over its message. This function handles the conversion of
     /// the signature format that is needed for some algorithms.
-    pub(in crate::cbor) fn verify_cose_sign1(&self, sign1: &CoseSign1) -> Result<()> {
+    pub(in crate::cbor) fn verify_cose_sign1(&self, sign1: &CoseSign1, aad: &[u8]) -> Result<()> {
         ensure!(sign1.protected.header.crit.is_empty(), "No critical headers allowed");
         ensure!(
             sign1.protected.header.alg == Some(Algorithm::Assigned(iana_algorithm(self.kind()))),
             "Algorithm mistmatch in protected header"
         );
-        sign1.verify_signature(b"", |signature, message| match self.kind() {
+        sign1.verify_signature(aad, |signature, message| match self.kind() {
             SignatureKind::Ec(k) => {
                 let der = ec_cose_signature_to_der(k, signature).context("Signature to DER")?;
                 self.verify(&der, message)
@@ -223,14 +223,14 @@ mod tests {
     fn sign_and_verify_okp() {
         let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
         let sign1 = key.sign_cose_sign1(b"signed payload".to_vec());
-        key.public_key().verify_cose_sign1(&sign1).unwrap();
+        key.public_key().verify_cose_sign1(&sign1, b"").unwrap();
     }
 
     #[test]
     fn sign_and_verify_ec2() {
         let key = PrivateKey::from_pem(P256_KEY_PEM[0]);
         let sign1 = key.sign_cose_sign1(b"signed payload".to_vec());
-        key.public_key().verify_cose_sign1(&sign1).unwrap();
+        key.public_key().verify_cose_sign1(&sign1, b"").unwrap();
     }
 
     #[test]
@@ -239,9 +239,20 @@ mod tests {
         let sign1 = CoseSign1Builder::new()
             .protected(HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA).build())
             .payload(b"the message".to_vec())
-            .create_signature(b"", |m| key.sign(m).unwrap())
+            .create_signature(b"the aad", |m| key.sign(m).unwrap())
             .build();
-        key.public_key().verify_cose_sign1(&sign1).unwrap();
+        key.public_key().verify_cose_sign1(&sign1, b"the aad").unwrap();
+    }
+
+    #[test]
+    fn verify_cose_sign1_fails_with_wrong_aad() {
+        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+        let sign1 = CoseSign1Builder::new()
+            .protected(HeaderBuilder::new().algorithm(iana::Algorithm::ES256).build())
+            .payload(b"the message".to_vec())
+            .create_signature(b"correct aad", |m| key.sign(m).unwrap())
+            .build();
+        key.public_key().verify_cose_sign1(&sign1, b"bad").unwrap_err();
     }
 
     #[test]
@@ -252,7 +263,7 @@ mod tests {
             .payload(b"the message".to_vec())
             .create_signature(b"", |m| key.sign(m).unwrap())
             .build();
-        key.public_key().verify_cose_sign1(&sign1).unwrap_err();
+        key.public_key().verify_cose_sign1(&sign1, b"").unwrap_err();
     }
 
     #[test]
@@ -268,7 +279,7 @@ mod tests {
             .payload(b"the message".to_vec())
             .create_signature(b"", |m| key.sign(m).unwrap())
             .build();
-        key.public_key().verify_cose_sign1(&sign1).unwrap()
+        key.public_key().verify_cose_sign1(&sign1, b"").unwrap()
     }
 
     #[test]
@@ -284,7 +295,7 @@ mod tests {
             .payload(b"the message".to_vec())
             .create_signature(b"", |m| key.sign(m).unwrap())
             .build();
-        key.public_key().verify_cose_sign1(&sign1).unwrap_err();
+        key.public_key().verify_cose_sign1(&sign1, b"").unwrap_err();
     }
 
     #[test]

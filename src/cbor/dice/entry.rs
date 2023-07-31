@@ -40,7 +40,7 @@ impl Entry {
         let sign1 = CoseSign1::from_cbor_value(cbor)
             .map_err(cose_error)
             .context("Given CBOR does not appear to be a COSE_sign1")?;
-        key.verify_cose_sign1(&sign1).context("cannot verify COSE_sign1")?;
+        key.verify_cose_sign1(&sign1, b"").context("cannot verify COSE_sign1")?;
         match sign1.payload {
             None => bail!("Missing payload"),
             Some(payload) => Ok(Self { payload }),
