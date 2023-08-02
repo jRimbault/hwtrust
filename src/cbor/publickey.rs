@@ -1,6 +1,6 @@
 //! CBOR encoding and decoding of a [`PublicKey`].
 
-use crate::publickey::{EcKind, PublicKey, SignatureKind};
+use crate::publickey::{EcKind, KeyAgreementPublicKey, PublicKey, SignatureKind};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use coset::cbor::value::Value;
 use coset::iana::{self, EnumI64};
@@ -16,11 +16,7 @@ impl PublicKey {
         if !cose_key.key_ops.is_empty() {
             ensure!(cose_key.key_ops.contains(&KeyOperation::Assigned(iana::KeyOperation::Verify)));
         }
-        let pkey = match cose_key.kty {
-            KeyType::Assigned(iana::KeyType::OKP) => pkey_from_okp_key(cose_key)?,
-            KeyType::Assigned(iana::KeyType::EC2) => pkey_from_ec2_key(cose_key)?,
-            _ => bail!("Unexpected KeyType value: {:?}", cose_key.kty),
-        };
+        let pkey = to_pkey(cose_key)?;
         pkey.try_into().context("Making PublicKey from PKey")
     }
 
@@ -75,6 +71,24 @@ impl PublicKey {
             .algorithm(iana_algorithm(self.kind()))
             .add_key_op(iana::KeyOperation::Verify)
             .build())
+    }
+}
+
+impl KeyAgreementPublicKey {
+    pub(super) fn from_cose_key(cose_key: &CoseKey) -> Result<Self> {
+        // RFC 9052 says the key_op for derive key is only for private keys. The public key
+        // has no key_ops (see Appendix B for an example).
+        ensure!(cose_key.key_ops.is_empty());
+        let pkey = to_pkey(cose_key)?;
+        pkey.try_into().context("Making KeyAgreementPublicKey from PKey")
+    }
+}
+
+fn to_pkey(cose_key: &CoseKey) -> Result<PKey<Public>> {
+    match cose_key.kty {
+        KeyType::Assigned(iana::KeyType::OKP) => Ok(pkey_from_okp_key(cose_key)?),
+        KeyType::Assigned(iana::KeyType::EC2) => Ok(pkey_from_ec2_key(cose_key)?),
+        _ => bail!("Unexpected KeyType value: {:?}", cose_key.kty),
     }
 }
 
