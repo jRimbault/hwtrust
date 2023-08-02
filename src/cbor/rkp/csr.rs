@@ -1,5 +1,6 @@
 use crate::cbor::field_value::FieldValue;
-use crate::rkp::{Csr, DeviceInfo};
+use crate::cbor::value_from_bytes;
+use crate::rkp::{Csr, DeviceInfo, ProtectedData};
 use crate::session::Session;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -35,18 +36,41 @@ impl Csr {
     }
 
     fn v2_from_cbor_values(
-        _session: &Session,
-        _csr: Vec<Value>,
+        session: &Session,
+        mut csr: Vec<Value>,
         mut device_info: Vec<Value>,
     ) -> Result<Self> {
+        let maced_keys_to_sign =
+            FieldValue::from_optional_value("MacedKeysToSign", csr.pop()).into_cose_mac0()?;
+        let encrypted_protected_data =
+            FieldValue::from_optional_value("ProtectedData", csr.pop()).into_cose_encrypt()?;
+        let challenge = FieldValue::from_optional_value("Challenge", csr.pop()).into_bytes()?;
+
         ensure!(device_info.len() == 2, "Device info should contain exactly 2 entries");
         device_info.pop(); // ignore unverified info
         let verified_device_info = match device_info.pop() {
-            Some(Value::Map(d)) => d,
+            Some(Value::Map(d)) => Value::Map(d),
             other => bail!("Expected a map for verified device info, found '{:?}'", other),
         };
 
-        Ok(Self::V2 { device_info: DeviceInfo::from_cbor_values(verified_device_info, None)? })
+        let protected_data = ProtectedData::from_cose_encrypt(
+            session,
+            encrypted_protected_data,
+            &challenge,
+            &verified_device_info,
+            &maced_keys_to_sign.tag,
+        )?;
+
+        let verified_device_info = match verified_device_info {
+            Value::Map(m) => m,
+            _ => unreachable!("verified device info is always a map"),
+        };
+
+        Ok(Self::V2 {
+            device_info: DeviceInfo::from_cbor_values(verified_device_info, None)?,
+            challenge,
+            protected_data,
+        })
     }
 
     fn v3_from_authenticated_request(
@@ -62,19 +86,19 @@ impl Csr {
 
         let signed_data =
             FieldValue::from_optional_value("SignedData", csr.pop()).into_cose_sign1()?;
+
         let signed_data_payload = signed_data.payload.context("missing payload in SignedData")?;
-        let csr_payload_value =
-            ciborium::de::from_reader::<Value, &[u8]>(signed_data_payload.as_slice())
-                .context("SignedData payload is not valid CBOR")?
-                .as_array_mut()
-                .context("SignedData payload is not a CBOR array")?
-                .pop()
-                .context("Missing CsrPayload in SignedData")?;
+        let csr_payload_value = value_from_bytes(&signed_data_payload)
+            .context("SignedData payload is not valid CBOR")?
+            .as_array_mut()
+            .context("SignedData payload is not a CBOR array")?
+            .pop()
+            .context("Missing CsrPayload in SignedData")?;
         let csr_payload_bytes = csr_payload_value
             .as_bytes()
             .context("CsrPayload (in SignedData) is expected to be encoded CBOR")?
             .as_slice();
-        let mut csr_payload = match ciborium::de::from_reader(csr_payload_bytes)? {
+        let mut csr_payload = match value_from_bytes(csr_payload_bytes)? {
             Value::Array(a) => a,
             other => bail!("CsrPayload is expected to be an array, found {other:?}"),
         };
@@ -95,6 +119,7 @@ mod tests {
     // generation spits out full JSON files, not just a CSR. Therefore, only a
     // minimal number of smoke tests are here.
     use super::*;
+    use crate::dice::{ChainForm, DegenerateChain};
     use crate::rkp::DeviceInfoVersion;
     use std::fs;
 
@@ -102,7 +127,21 @@ mod tests {
     fn from_base64_valid_v2() {
         let input = fs::read_to_string("testdata/csr/v2_csr.base64").unwrap().trim().to_owned();
         let csr = Csr::from_base64_cbor(&Session::default(), &input).unwrap();
-        assert_eq!(csr, Csr::V2 { device_info: testutil::test_device_info(DeviceInfoVersion::V2) });
+
+        let device_info = testutil::test_device_info(DeviceInfoVersion::V2);
+        let challenge =
+            b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10".to_vec();
+        let pem = "-----BEGIN PUBLIC KEY-----\n\
+                   MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERd9pHZbUJ/b4IleUGDN8fs8+LDxE\n\
+                   vG6VX1dkw0sClFs4imbzfXGbocEq74S7TQiyZkd1LhY6HRZnTC51KoGDIA==\n\
+                   -----END PUBLIC KEY-----\n";
+        let subject_public_key =
+            openssl::pkey::PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
+        let degenerate = ChainForm::Degenerate(
+            DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
+        );
+        let protected_data = ProtectedData::new(vec![0; 32], degenerate, None);
+        assert_eq!(csr, Csr::V2 { device_info, challenge, protected_data });
     }
 
     #[test]

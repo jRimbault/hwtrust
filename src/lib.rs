@@ -7,3 +7,4 @@ pub mod rkp;
 pub mod session;
 
 mod cbor;
+mod eek;

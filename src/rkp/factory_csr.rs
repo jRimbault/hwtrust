@@ -47,9 +47,13 @@ impl FactoryCsr {
 mod tests {
     use super::*;
     use crate::cbor::rkp::csr::testutil::test_device_info;
+    use crate::dice::{ChainForm, DegenerateChain};
     use crate::rkp::device_info::DeviceInfoVersion;
     use crate::rkp::factory_csr::FactoryCsr;
+    use crate::rkp::{ProtectedData, UdsCerts, UdsCertsEntry};
     use anyhow::anyhow;
+    use itertools::Itertools;
+    use openssl::x509::X509;
     use std::fs;
     use std::fs::File;
 
@@ -65,10 +69,54 @@ mod tests {
     fn from_json_valid_v2_ed25519() {
         let json = fs::read_to_string("testdata/factory_csr/v2_ed25519_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
+        let pem = "-----BEGIN PUBLIC KEY-----\n\
+                   MCowBQYDK2VwAyEAOhWsfxcBLgUfLLdqpb8cLUWutkkPtfIqDRfJC3LUihI=\n\
+                   -----END PUBLIC KEY-----\n";
+        let subject_public_key =
+            openssl::pkey::PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
+        let degenerate = ChainForm::Degenerate(
+            DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
+        );
+        let chain = vec![
+            "-----BEGIN CERTIFICATE-----\n\
+             MIIBaDCCARqgAwIBAgIBezAFBgMrZXAwKzEVMBMGA1UEChMMRmFrZSBDb21wYW55\n\
+             MRIwEAYDVQQDEwlGYWtlIFJvb3QwHhcNMjMwODAxMjI1MTM0WhcNMjMwODMxMjI1\n\
+             MTM0WjArMRUwEwYDVQQKEwxGYWtlIENvbXBhbnkxEjAQBgNVBAMTCUZha2UgUm9v\n\
+             dDAqMAUGAytlcAMhAJYhPNIeQXe6+GPFiQAg4WtK+D8HuWaF6Es4X3HgDzq7o2Mw\n\
+             YTAdBgNVHQ4EFgQUDR0DF3abDeR3WXSlIhpN07R049owHwYDVR0jBBgwFoAUDR0D\n\
+             F3abDeR3WXSlIhpN07R049owDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n\
+             AgQwBQYDK2VwA0EAWNEhXrATWj4MXT/n38OwbngUm/n/5+vGFqV0aXuJPX/8d6Yx\n\
+             BbX/LFv6m8/VuPuItSqK4AudgwZJoupR/lknDg==\n\
+             -----END CERTIFICATE-----\n",
+            "-----BEGIN CERTIFICATE-----\n\
+             MIIBbDCCAR6gAwIBAgICAcgwBQYDK2VwMCsxFTATBgNVBAoTDEZha2UgQ29tcGFu\n\
+             eTESMBAGA1UEAxMJRmFrZSBSb290MB4XDTIzMDgwMTIyNTEzNFoXDTIzMDgzMTIy\n\
+             NTEzNFowLjEVMBMGA1UEChMMRmFrZSBDb21wYW55MRUwEwYDVQQDEwxGYWtlIENo\n\
+             aXBzZXQwKjAFBgMrZXADIQA6Fax/FwEuBR8st2qlvxwtRa62SQ+18ioNF8kLctSK\n\
+             EqNjMGEwHQYDVR0OBBYEFEbOrkgBL2SUCLJayyvpc+oR7m6/MB8GA1UdIwQYMBaA\n\
+             FA0dAxd2mw3kd1l0pSIaTdO0dOPaMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/\n\
+             BAQDAgIEMAUGAytlcANBANJmKGgiZP3tqtjnHpbmR3ypkXtvuqmo6KTBIHKsGKAO\n\
+             mH8qlMQPLmNSdxTs3OnVrlxQwZqXxHjVHS/6OpkkFgo=\n\
+             -----END CERTIFICATE-----\n",
+        ];
+        let chain = chain
+            .iter()
+            .map(|pem| X509::from_pem(pem.as_bytes()).unwrap().to_der().unwrap())
+            .collect_vec();
+
+        let mut uds_certs = UdsCerts::new();
+        uds_certs
+            .0
+            .insert("google-test".to_string(), UdsCertsEntry::new_x509_chain(chain).unwrap());
         assert_eq!(
             csr,
             FactoryCsr {
-                csr: Csr::V2 { device_info: test_device_info(DeviceInfoVersion::V2) },
+                csr: Csr::V2 {
+                    device_info: test_device_info(DeviceInfoVersion::V2),
+                    challenge: b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"
+                        .to_vec(),
+                    protected_data: ProtectedData::new(vec![0; 32], degenerate, Some(uds_certs)),
+                },
                 name: "default".to_string(),
             }
         );
@@ -91,10 +139,24 @@ mod tests {
     fn from_json_valid_v2_p256() {
         let json = fs::read_to_string("testdata/factory_csr/v2_p256_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
+        let pem = "-----BEGIN PUBLIC KEY-----\n\
+                   MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERd9pHZbUJ/b4IleUGDN8fs8+LDxE\n\
+                   vG6VX1dkw0sClFs4imbzfXGbocEq74S7TQiyZkd1LhY6HRZnTC51KoGDIA==\n\
+                   -----END PUBLIC KEY-----\n";
+        let subject_public_key =
+            openssl::pkey::PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
+        let degenerate = ChainForm::Degenerate(
+            DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
+        );
         assert_eq!(
             csr,
             FactoryCsr {
-                csr: Csr::V2 { device_info: test_device_info(DeviceInfoVersion::V2) },
+                csr: Csr::V2 {
+                    device_info: test_device_info(DeviceInfoVersion::V2),
+                    challenge: b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"
+                        .to_vec(),
+                    protected_data: ProtectedData::new(vec![0; 32], degenerate, None),
+                },
                 name: "default".to_string(),
             }
         );
