@@ -271,6 +271,9 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
         }
     }
 
+    let extensions =
+        extensions.into_iter().map(|(k, v)| (k.to_string(), format!("{v:?}"))).collect();
+
     Ok(ConfigDescBuilder::new()
         .component_name(component_name.into_optional_string().context("Component name")?)
         .component_version(
@@ -278,6 +281,7 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
         )
         .resettable(resettable.is_null().context("Resettable")?)
         .security_version(security_version.into_optional_u64().context("Security version")?)
+        .extensions(extensions)
         .build())
 }
 
@@ -635,6 +639,23 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let session = Session { options: Options::default() };
         Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+    }
+
+    #[test]
+    fn config_desc_custom_fields() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({-71000 => "custom hi", -69999 => "custom lo"}).unwrap());
+        let config_hash = sha512(&config_desc).to_vec();
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
+        let session = Session { options: Options::default() };
+        let payload =
+            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        let extensions = payload.config_desc().extensions();
+        let extensions = HashMap::<_, _>::from_iter(extensions.to_owned());
+        assert_eq!(extensions.get("-71000").unwrap(), "Text(\"custom hi\")");
+        assert_eq!(extensions.get("-69999").unwrap(), "Text(\"custom lo\")");
+        assert_eq!(extensions.len(), 2);
     }
 
     #[test]
