@@ -6,6 +6,7 @@ use std::fmt::{self, Display, Formatter};
 use thiserror::Error;
 
 /// Enumeration of the different forms that a DICE chain can take.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChainForm {
     /// A proper DICE chain with multiple layers of trust.
     Proper(Chain),
@@ -15,7 +16,7 @@ pub enum ChainForm {
 
 /// Represents a DICE chain. This consists of the root public key (which signs the first
 /// certificate), followed by a chain of certificates.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Chain {
     root_public_key: PublicKey,
     payloads: Vec<Payload>,
@@ -31,6 +32,15 @@ pub(crate) enum ValidationError {
     RepeatedSubject(usize, String),
     #[error("repeated key in payload {0}")]
     RepeatedKey(usize),
+}
+
+impl ChainForm {
+    pub(crate) fn leaf_public_key(&self) -> &PublicKey {
+        match self {
+            Self::Proper(chain) => chain.leaf().subject_public_key(),
+            Self::Degenerate(degenerate) => degenerate.public_key(),
+        }
+    }
 }
 
 impl Chain {
@@ -113,7 +123,7 @@ pub(crate) enum DegenerateChainError {
 /// A degenerate DICE chain. These chains consist of a single, self-signed certificate and the
 /// entries contain less information than usual. They are expected from devices that haven't
 /// implemented everything necessary to produce a proper DICE Chain.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DegenerateChain {
     issuer: String,
     subject: String,
@@ -253,7 +263,7 @@ mod tests {
     #[test]
     fn degenerate_chain_valid() {
         let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]).public_key();
-        DegenerateChain::new("issuer", "subject", key).unwrap();
+        DegenerateChain::new("issuer", "issuer", key).unwrap();
     }
 
     #[test]

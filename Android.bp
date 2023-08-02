@@ -12,6 +12,7 @@ rust_defaults {
         "libciborium",
         "libcoset",
         "libhex",
+        "libitertools",
         "libopenssl",
         "libserde_json",
         "libthiserror",

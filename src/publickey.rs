@@ -31,7 +31,7 @@ pub(crate) enum EcKind {
 
 // Wraps PKey<Public> so we can implement some traits around it, allowing for derived traits on
 // types that include a PKey<Public>.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct PKeyPublicWrapper(PKey<Public>);
 
 /// Public key used for signature validation.
@@ -86,6 +86,10 @@ impl PublicKey {
 }
 
 impl KeyAgreementPublicKey {
+    pub(crate) fn pkey(&self) -> &PKeyRef<Public> {
+        &self.pkey.0
+    }
+
     /// Serializes the public key into a PEM-encoded SubjectPublicKeyInfo structure.
     pub fn to_pem(&self) -> String {
         self.pkey.to_pem()
@@ -111,6 +115,12 @@ impl PartialEq for PKeyPublicWrapper {
 impl PKeyPublicWrapper {
     fn to_pem(&self) -> String {
         String::from_utf8(self.0.public_key_to_pem().unwrap()).unwrap()
+    }
+}
+
+impl fmt::Debug for PKeyPublicWrapper {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.write_str(&self.to_pem())
     }
 }
 
