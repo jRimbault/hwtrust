@@ -297,12 +297,8 @@ impl Display for ConfigDesc {
         if let Some(security_version) = &self.security_version {
             writeln!(f, "Security Version: {}", security_version)?;
         }
-        if !self.extensions.is_empty() {
-            writeln!(f, "Extensions {{")?;
-            for (key, value) in &self.extensions {
-                writeln!(f, "{key}: {value}")?;
-            }
-            writeln!(f, "}}")?;
+        for (key, value) in &self.extensions {
+            writeln!(f, "{key}: {value}")?;
         }
         Ok(())
     }
