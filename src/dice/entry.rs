@@ -100,8 +100,9 @@ impl Display for Payload {
             writeln!(f, "Authority Desc: {}", hex::encode(authority_desc))?;
         }
         writeln!(f, "Authority Hash: {}", hex::encode(&self.authority_hash))?;
-        writeln!(f, "Config Desc:")?;
+        writeln!(f, "Config Desc {{")?;
         write!(f, "{}", &self.config_desc)?;
+        writeln!(f, "}}")?;
         Ok(())
     }
 }
@@ -252,6 +253,7 @@ pub struct ConfigDesc {
     component_version: Option<ComponentVersion>,
     resettable: bool,
     security_version: Option<u64>,
+    extensions: Vec<(String, String)>,
 }
 
 impl ConfigDesc {
@@ -274,6 +276,11 @@ impl ConfigDesc {
     pub fn security_version(&self) -> Option<u64> {
         self.security_version
     }
+
+    /// Return any extensions present in the descriptor.
+    pub fn extensions(&self) -> &[(String, String)] {
+        &self.extensions
+    }
 }
 
 impl Display for ConfigDesc {
@@ -289,6 +296,13 @@ impl Display for ConfigDesc {
         }
         if let Some(security_version) = &self.security_version {
             writeln!(f, "Security Version: {}", security_version)?;
+        }
+        if !self.extensions.is_empty() {
+            writeln!(f, "Extensions {{")?;
+            for (key, value) in &self.extensions {
+                writeln!(f, "{key}: {value}")?;
+            }
+            writeln!(f, "}}")?;
         }
         Ok(())
     }
@@ -332,6 +346,13 @@ impl ConfigDescBuilder {
     #[must_use]
     pub fn security_version(mut self, version: Option<u64>) -> Self {
         self.0.security_version = version;
+        self
+    }
+
+    /// Sets the extension key/value pairs.
+    #[must_use]
+    pub fn extensions(mut self, extensions: Vec<(String, String)>) -> Self {
+        self.0.extensions = extensions;
         self
     }
 }
