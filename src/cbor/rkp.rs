@@ -2,3 +2,4 @@
 
 pub(crate) mod csr;
 mod device_info;
+mod protected_data;
