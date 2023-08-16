@@ -77,7 +77,7 @@ mod tests {
         let degenerate = ChainForm::Degenerate(
             DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
         );
-        let chain = vec![
+        let chain = [
             "-----BEGIN CERTIFICATE-----\n\
              MIIBaDCCARqgAwIBAgIBezAFBgMrZXAwKzEVMBMGA1UEChMMRmFrZSBDb21wYW55\n\
              MRIwEAYDVQQDEwlGYWtlIFJvb3QwHhcNMjMwODAxMjI1MTM0WhcNMjMwODMxMjI1\n\
