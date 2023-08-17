@@ -50,3 +50,17 @@ fn factory_csr_one_invalid_csr_of_multiple_fails() {
         .unwrap();
     assert!(!output.status.success());
 }
+
+#[test]
+fn exit_code_for_good_csr() {
+    let output =
+        Command::new(hwtrust_bin()).args(["csr", "testdata/csr/valid_csr.cbor"]).output().unwrap();
+    assert!(output.status.success());
+}
+
+#[test]
+fn exit_code_for_bad_csr() {
+    let output =
+        Command::new(hwtrust_bin()).args(["csr", "testdata/csr/bad_csr.cbor"]).output().unwrap();
+    assert!(!output.status.success());
+}

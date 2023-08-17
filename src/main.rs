@@ -32,6 +32,7 @@ enum Action {
     VerifyDiceChain(DiceChainArgs),
     DiceChain(DiceChainArgs),
     FactoryCsr(FactoryCsrArgs),
+    Csr(CsrArgs),
 }
 
 #[derive(Parser)]
@@ -55,6 +56,16 @@ struct FactoryCsrArgs {
     /// Path to a file containing one or more CSRs, in the "csr+json" format as defined by
     /// rkp_factory_extraction_tool. Each line is interpreted as a separate JSON blob containing
     /// a base64-encoded CSR.
+    csr_file: String,
+}
+
+#[derive(Parser)]
+/// Parse and verify a request payload that is suitable for the RKP server's SignCertificates API.
+/// In HALv3, this is the output of generateCertificateRequestV2. For previous HAL versions,
+/// the CSR is constructed by the remote provisioning service client, but is constructed from the
+/// outputs of generateCertificateRequest.
+struct CsrArgs {
+    /// Path to a file containing a single CSR, encoded as CBOR.
     csr_file: String,
 }
 
@@ -106,6 +117,7 @@ fn main() -> Result<()> {
         }
         Action::DiceChain(sub_args) => verify_dice_chain(&args, sub_args)?,
         Action::FactoryCsr(sub_args) => parse_factory_csr(&args, sub_args)?,
+        Action::Csr(sub_args) => parse_csr(&args, sub_args)?,
     }
     println!("Success!");
     Ok(())
@@ -137,6 +149,16 @@ fn parse_factory_csr(args: &Args, sub_args: &FactoryCsrArgs) -> Result<()> {
     }
     if csr_count == 0 {
         bail!("No CSRs found in the input file '{}'", sub_args.csr_file);
+    }
+    Ok(())
+}
+
+fn parse_csr(args: &Args, sub_args: &CsrArgs) -> Result<()> {
+    let session = session_from_vsr(args.vsr);
+    let input = &fs::File::open(&sub_args.csr_file)?;
+    let csr = rkp::Csr::from_cbor(&session, input)?;
+    if args.verbose {
+        print!("{csr:#?}");
     }
     Ok(())
 }
