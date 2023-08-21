@@ -28,7 +28,7 @@ that the signatures verify correctly. To do so, place the CBOR-encoded DICE
 chain in a file, e.g. `chain.bin`, then call the tool.
 
 ```shell
-hwtrust verify-dice-chain chain.bin
+hwtrust dice-chain chain.bin
 ```
 
 The exit code is zero if the chain passed verification and non-zero otherwise.
