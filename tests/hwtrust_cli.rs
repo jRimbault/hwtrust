@@ -8,7 +8,7 @@ fn hwtrust_bin() -> &'static str {
 #[test]
 fn exit_code_for_good_chain() {
     let output = Command::new(hwtrust_bin())
-        .args(["verify-dice-chain", "testdata/dice/valid_ed25519.chain"])
+        .args(["dice-chain", "testdata/dice/valid_ed25519.chain"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -17,7 +17,7 @@ fn exit_code_for_good_chain() {
 #[test]
 fn exit_code_for_bad_chain() {
     let output = Command::new(hwtrust_bin())
-        .args(["verify-dice-chain", "testdata/dice/bad_p256.chain"])
+        .args(["dice-chain", "testdata/dice/bad_p256.chain"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -26,7 +26,7 @@ fn exit_code_for_bad_chain() {
 #[test]
 fn factory_csr_empty_input_fails() {
     let output = Command::new(hwtrust_bin())
-        .args(["verify-dice-chain", "testdata/dice/bad_p256.chain"])
+        .args(["dice-chain", "testdata/dice/bad_p256.chain"])
         .output()
         .unwrap();
     assert!(!output.status.success());

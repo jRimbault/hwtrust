@@ -28,7 +28,7 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Action {
-    VerifyDiceChain(VerifyDiceChainArgs),
+    DiceChain(DiceChainArgs),
     FactoryCsr(FactoryCsrArgs),
 }
 
@@ -40,7 +40,7 @@ enum Action {
 ///
 /// [1] -- https://cs.android.com/android/platform/superproject/+/master:hardware/interfaces/security/rkp/aidl/android/hardware/security/keymint/IRemotelyProvisionedComponent.aidl
 /// [2] -- https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/specification.md
-struct VerifyDiceChainArgs {
+struct DiceChainArgs {
     /// Path to a file containing a DICE chain
     chain: String,
 }
@@ -93,14 +93,14 @@ fn session_from_vsr(vsr: Option<VsrVersion>) -> Session {
 fn main() -> Result<()> {
     let args = Args::parse();
     match &args.action {
-        Action::VerifyDiceChain(sub_args) => verify_dice_chain(&args, sub_args)?,
+        Action::DiceChain(sub_args) => verify_dice_chain(&args, sub_args)?,
         Action::FactoryCsr(sub_args) => parse_factory_csr(&args, sub_args)?,
     }
     println!("Success!");
     Ok(())
 }
 
-fn verify_dice_chain(args: &Args, sub_args: &VerifyDiceChainArgs) -> Result<()> {
+fn verify_dice_chain(args: &Args, sub_args: &DiceChainArgs) -> Result<()> {
     let session = session_from_vsr(args.vsr);
     let chain = dice::Chain::from_cbor(&session, &fs::read(&sub_args.chain)?)?;
     if args.verbose {
