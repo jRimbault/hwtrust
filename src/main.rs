@@ -28,6 +28,7 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Action {
+    VerifyDiceChain(DiceChainArgs),
     DiceChain(DiceChainArgs),
     FactoryCsr(FactoryCsrArgs),
 }
@@ -93,6 +94,14 @@ fn session_from_vsr(vsr: Option<VsrVersion>) -> Session {
 fn main() -> Result<()> {
     let args = Args::parse();
     match &args.action {
+        Action::VerifyDiceChain(sub_args) => {
+            println!();
+            println!("  ********************************************************************");
+            println!("  ! 'verify-dice-chain' has been deprecated in favor of 'dice-chain'.!");
+            println!("  ********************************************************************");
+            println!();
+            verify_dice_chain(&args, sub_args)?
+        }
         Action::DiceChain(sub_args) => verify_dice_chain(&args, sub_args)?,
         Action::FactoryCsr(sub_args) => parse_factory_csr(&args, sub_args)?,
     }
