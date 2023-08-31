@@ -13,10 +13,17 @@ rust_defaults {
         "libcoset",
         "libhex",
         "libitertools",
-        "libopenssl",
         "libserde_json",
         "libthiserror",
     ],
+    target: {
+        host: {
+            rlibs: ["libopenssl_static"],
+        },
+        android: {
+            rustlibs: ["libopenssl"],
+        }
+    },
 }
 
 rust_library {
@@ -54,6 +61,16 @@ rust_defaults {
 rust_binary {
     name: "hwtrust",
     defaults: ["hwtrust_defaults"],
+    target: {
+        host: {
+            compile_multilib: "first",
+            dist: {
+                dir: "rkp/host",
+                targets: ["dist_files"],
+            },
+            static_executable: true,
+        },
+    }
 }
 
 rust_test {
