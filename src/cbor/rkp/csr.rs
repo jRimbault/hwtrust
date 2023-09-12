@@ -82,7 +82,11 @@ impl Csr {
             bail!("Invalid CSR version. Only '1' is supported, found '{}", version);
         }
 
-        let _unverified_info = FieldValue::from_optional_value("UnverifiedDeviceInfo", csr.pop());
+        // CSRs that are uploaded to the backend have an additional unverified info field tacked
+        // onto them. We just ignore that, so if it's there pop it and move on.
+        if csr.len() == 5 {
+            FieldValue::from_optional_value("UnverifiedDeviceInfo", csr.pop());
+        }
 
         let signed_data =
             FieldValue::from_optional_value("SignedData", csr.pop()).into_cose_sign1()?;
