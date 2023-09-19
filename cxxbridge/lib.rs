@@ -14,6 +14,10 @@ mod ffi {
         Vsr13,
         /// The DICE chain specified by VSR 14.
         Vsr14,
+        /// The DICE chain specified by VSR 15.
+        Vsr15,
+        /// The DICE chain specified by VSR 16.
+        Vsr16,
     }
 
     /// The result type used by [`verify_dice_chain()`]. The standard [`Result`] is currently only
@@ -47,6 +51,8 @@ fn verify_dice_chain(chain: &[u8], kind: ffi::DiceChainKind) -> ffi::VerifyDiceC
         options: match kind {
             ffi::DiceChainKind::Vsr13 => Options::vsr13(),
             ffi::DiceChainKind::Vsr14 => Options::vsr14(),
+            ffi::DiceChainKind::Vsr15 => Options::vsr15(),
+            ffi::DiceChainKind::Vsr16 => Options::vsr16(),
             _ => {
                 return ffi::VerifyDiceChainResult {
                     error: "invalid chain kind".to_string(),
