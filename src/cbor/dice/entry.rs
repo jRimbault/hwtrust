@@ -1,16 +1,19 @@
 use super::cose_key_from_cbor_value;
+use super::profile::{ComponentVersionType, ModeType, Profile};
 use crate::cbor::{cose_error, field_value::FieldValue, value_from_bytes};
 use crate::dice::{
     ComponentVersion, ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder,
+    ProfileVersion,
 };
 use crate::publickey::PublicKey;
-use crate::session::{ComponentVersionType, ConfigFormat, ModeType, Session};
+use crate::session::Session;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use ciborium::value::Value;
 use coset::{AsCborValue, CoseSign1};
 use openssl::sha::{sha256, sha384, sha512};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 const ISS: i64 = 1;
 const SUB: i64 = 2;
@@ -23,6 +26,7 @@ const AUTHORITY_DESC: i64 = -4670550;
 const MODE: i64 = -4670551;
 const SUBJECT_PUBLIC_KEY: i64 = -4670552;
 const KEY_USAGE: i64 = -4670553;
+const PROFILE_NAME: i64 = -4670554;
 
 const CONFIG_DESC_RESERVED_MAX: i64 = -70000;
 const CONFIG_DESC_RESERVED_MIN: i64 = -70999;
@@ -52,13 +56,32 @@ impl Entry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ConfigFormat {
+    /// The configuration descriptor format specified by Android.
+    #[default]
+    Android,
+    /// The configuration descriptor format is either that specified by Android or is ignored.
+    AndroidOrIgnored,
+}
+
 impl Payload {
     pub(super) fn from_cbor(
         session: &Session,
         bytes: &[u8],
         config_format: ConfigFormat,
     ) -> Result<Self> {
-        let f = PayloadFields::from_cbor(session, bytes, config_format)?;
+        let entries = cbor_map_from_slice(bytes)?;
+        let profile_version = PayloadFields::extract_profile_version(session, &entries)?;
+        Self::from_entries(&profile_version.into(), entries, config_format)
+    }
+
+    fn from_entries(
+        profile: &Profile,
+        entries: Vec<(Value, Value)>,
+        config_format: ConfigFormat,
+    ) -> Result<Self> {
+        let f = PayloadFields::from_entries(profile, entries, config_format)?;
         PayloadBuilder::with_subject_public_key(f.subject_public_key)
             .issuer(f.issuer)
             .subject(f.subject)
@@ -93,6 +116,47 @@ impl PayloadFields {
         bytes: &[u8],
         config_format: ConfigFormat,
     ) -> Result<Self> {
+        let entries = cbor_map_from_slice(bytes)?;
+        let profile_version = Self::extract_profile_version(session, &entries)?;
+        Self::from_entries(&profile_version.into(), entries, config_format)
+    }
+
+    fn extract_profile_version(
+        session: &Session,
+        entries: &[(Value, Value)],
+    ) -> Result<ProfileVersion> {
+        let mut profile_name = FieldValue::new("profile name");
+        for (key, value) in entries.iter() {
+            if key == &Value::from(PROFILE_NAME) {
+                profile_name.set_once(value.clone())?;
+            }
+        }
+
+        let profile_version = match profile_name.into_optional_string()? {
+            None => {
+                let version = session.options.dice_profile_range.start();
+                ensure!(version <= ProfileVersion::Android14, "profile name is required");
+                version
+            }
+            Some(profile_name) => {
+                ProfileVersion::from_str(&profile_name).with_context(|| profile_name.clone())?
+            }
+        };
+        ensure!(
+            session.options.dice_profile_range.contains(profile_version),
+            "profile version \"{profile_version}\" is less than \"{}\" or greater than \"{}\"",
+            session.options.dice_profile_range.start(),
+            session.options.dice_profile_range.end(),
+        );
+
+        Ok(profile_version)
+    }
+
+    fn from_entries(
+        profile: &Profile,
+        entries: Vec<(Value, Value)>,
+        config_format: ConfigFormat,
+    ) -> Result<Self> {
         let mut issuer = FieldValue::new("issuer");
         let mut subject = FieldValue::new("subject");
         let mut subject_public_key = FieldValue::new("subject public key");
@@ -104,8 +168,8 @@ impl PayloadFields {
         let mut authority_desc = FieldValue::new("authority desc");
         let mut authority_hash = FieldValue::new("authority hash");
         let mut key_usage = FieldValue::new("key usage");
+        let mut profile_name = FieldValue::new("profile name");
 
-        let entries = cbor_map_from_slice(bytes)?;
         for (key, value) in entries.into_iter() {
             if let Some(Ok(key)) = key.as_integer().map(TryInto::try_into) {
                 let field = match key {
@@ -120,6 +184,7 @@ impl PayloadFields {
                     AUTHORITY_DESC => &mut authority_desc,
                     AUTHORITY_HASH => &mut authority_hash,
                     KEY_USAGE => &mut key_usage,
+                    PROFILE_NAME => &mut profile_name,
                     _ => bail!("Unknown key {}", key),
                 };
                 field.set_once(value)?
@@ -128,15 +193,15 @@ impl PayloadFields {
             }
         }
 
-        validate_key_usage(session, key_usage)?;
+        validate_key_usage(profile, key_usage)?;
         let (config_desc, config_hash) =
-            validate_config(session, config_desc, config_hash, config_format).context("config")?;
+            validate_config(profile, config_desc, config_hash, config_format).context("config")?;
 
         Ok(Self {
             issuer: issuer.into_string()?,
             subject: subject.into_string()?,
-            subject_public_key: validate_subject_public_key(session, subject_public_key)?,
-            mode: validate_mode(session, mode)?,
+            subject_public_key: validate_subject_public_key(profile, subject_public_key)?,
+            mode: validate_mode(profile, mode)?,
             code_desc: code_desc.into_optional_bytes()?,
             code_hash: code_hash.into_optional_bytes()?,
             config_desc,
@@ -147,11 +212,11 @@ impl PayloadFields {
     }
 }
 
-fn validate_key_usage(session: &Session, key_usage: FieldValue) -> Result<()> {
+fn validate_key_usage(profile: &Profile, key_usage: FieldValue) -> Result<()> {
     let key_usage = key_usage.into_bytes().context("key usage")?;
     let key_cert_sign = 1 << 5;
     if key_usage.len() > 1
-        && session.options.dice_chain_allow_big_endian_key_usage
+        && profile.allow_big_endian_key_usage
         && key_usage[key_usage.len() - 1] == key_cert_sign
         && key_usage.iter().take(key_usage.len() - 1).all(|&x| x == 0)
     {
@@ -167,19 +232,19 @@ fn validate_key_usage(session: &Session, key_usage: FieldValue) -> Result<()> {
 }
 
 fn validate_subject_public_key(
-    session: &Session,
+    profile: &Profile,
     subject_public_key: FieldValue,
 ) -> Result<PublicKey> {
     let subject_public_key = subject_public_key.into_bytes()?;
     let subject_public_key = value_from_bytes(&subject_public_key).context("decode CBOR")?;
-    let subject_public_key = cose_key_from_cbor_value(session, subject_public_key)
+    let subject_public_key = cose_key_from_cbor_value(subject_public_key, profile.key_ops_type)
         .context("parsing subject public key")?;
     PublicKey::from_cose_key(&subject_public_key)
         .context("parsing subject public key from COSE_key")
 }
 
-fn validate_mode(session: &Session, mode: FieldValue) -> Result<Option<DiceMode>> {
-    Ok(if !mode.is_bytes() && session.options.dice_chain_mode_type == ModeType::IntOrBytes {
+fn validate_mode(profile: &Profile, mode: FieldValue) -> Result<Option<DiceMode>> {
+    Ok(if !mode.is_bytes() && profile.mode_type == ModeType::IntOrBytes {
         mode.into_optional_i64()?
     } else {
         mode.into_optional_bytes()?
@@ -200,7 +265,7 @@ fn validate_mode(session: &Session, mode: FieldValue) -> Result<Option<DiceMode>
 }
 
 fn validate_config(
-    session: &Session,
+    profile: &Profile,
     config_desc: FieldValue,
     config_hash: FieldValue,
     config_format: ConfigFormat,
@@ -208,11 +273,11 @@ fn validate_config(
     let config_desc = config_desc.into_optional_bytes()?;
     let config_hash = config_hash.into_optional_bytes()?;
     if let Some(config_desc) = config_desc {
-        let config = config_desc_from_slice(session, &config_desc).context("parsing descriptor");
-        if config.is_err() && config_format == ConfigFormat::Permissive {
+        let config = config_desc_from_slice(profile, &config_desc).context("parsing descriptor");
+        if config.is_err() && config_format == ConfigFormat::AndroidOrIgnored {
             return Ok((Some(ConfigDesc::default()), config_hash));
         }
-        if !session.options.dice_chain_config_hash_unverified {
+        if !profile.config_hash_unverified {
             let Some(ref hash) = config_hash else { bail!("hash required") };
             match hash.len() {
                 32 => ensure!(hash == &sha256(&config_desc)),
@@ -236,7 +301,7 @@ fn cbor_map_from_slice(bytes: &[u8]) -> Result<Vec<(Value, Value)>> {
     Ok(entries)
 }
 
-fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc> {
+fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc> {
     let entries = cbor_map_from_slice(bytes)?;
 
     let mut component_name = FieldValue::new("component name");
@@ -277,7 +342,7 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
     Ok(ConfigDescBuilder::new()
         .component_name(component_name.into_optional_string().context("Component name")?)
         .component_version(
-            validate_version(session, component_version).context("Component version")?,
+            validate_version(profile, component_version).context("Component version")?,
         )
         .resettable(resettable.is_null().context("Resettable")?)
         .security_version(security_version.into_optional_u64().context("Security version")?)
@@ -285,11 +350,10 @@ fn config_desc_from_slice(session: &Session, bytes: &[u8]) -> Result<ConfigDesc>
         .build())
 }
 
-fn validate_version(session: &Session, field: FieldValue) -> Result<Option<ComponentVersion>> {
+fn validate_version(profile: &Profile, field: FieldValue) -> Result<Option<ComponentVersion>> {
     Ok(
         if !field.is_integer()
-            && session.options.dice_chain_component_version_type
-                == ComponentVersionType::IntOrString
+            && profile.component_version_type == ComponentVersionType::IntOrString
         {
             field.into_optional_string()?.map(ComponentVersion::String)
         } else {
@@ -301,9 +365,10 @@ fn validate_version(session: &Session, field: FieldValue) -> Result<Option<Compo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cbor::dice::KeyOpsType;
     use crate::cbor::serialize;
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM};
-    use crate::session::{KeyOpsType, Options};
+    use crate::session::{DiceProfileRange, Options};
     use ciborium::cbor;
     use coset::iana::{self, EnumI64};
     use coset::CborSerializable;
@@ -509,13 +574,11 @@ mod tests {
     fn mode_int_debug() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::from(2));
-        let cbor = serialize_fields(fields);
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let session = Session {
-            options: Options { dice_chain_mode_type: ModeType::IntOrBytes, ..Options::default() },
-        };
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
+            .unwrap_err();
+        let profile = Profile { mode_type: ModeType::IntOrBytes, ..Profile::default() };
+        let payload = Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
         assert_eq!(payload.mode(), DiceMode::Debug);
     }
 
@@ -549,52 +612,44 @@ mod tests {
     fn key_usage_big_endian() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0x20]));
-        let cbor = serialize_fields(fields);
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let session = Session {
-            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
-        };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
+            .unwrap_err();
+        let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
     }
 
     #[test]
     fn key_usage_big_endian_invalid() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0xfe, 0x20]));
-        let cbor = serialize_fields(fields);
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let session = Session {
-            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
-        };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
+            .unwrap_err();
+        let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
     fn key_usage_invalid() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0x10]));
-        let cbor = serialize_fields(fields);
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let session = Session {
-            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
-        };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
+            .unwrap_err();
+        let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
     fn key_usage_empty() {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![]));
-        let cbor = serialize_fields(fields);
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let session = Session {
-            options: Options { dice_chain_allow_big_endian_key_usage: true, ..Options::default() },
-        };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
+            .unwrap_err();
+        let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
@@ -665,7 +720,7 @@ mod tests {
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
         Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Permissive).unwrap();
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::AndroidOrIgnored).unwrap();
         assert_eq!(payload.config_desc(), &ConfigDesc::default());
     }
 
@@ -676,16 +731,12 @@ mod tests {
         let config_hash = sha512(&config_desc).to_vec();
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
-        let cbor = serialize_fields(fields);
-        let session = Session {
-            options: Options {
-                dice_chain_component_version_type: ComponentVersionType::Int,
-                ..Options::default()
-            },
-        };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let session = Session { options: Options::default() };
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let entries = encode_fields(fields);
+        let profile =
+            Profile { component_version_type: ComponentVersionType::Int, ..Profile::default() };
+        Payload::from_entries(&profile, entries.clone(), ConfigFormat::Android).unwrap_err();
+        let payload =
+            Payload::from_entries(&Profile::default(), entries, ConfigFormat::Android).unwrap();
         assert_eq!(
             payload.config_desc().component_version(),
             Some(&ComponentVersion::String("It's version 4".to_string()))
@@ -736,9 +787,8 @@ mod tests {
     fn config_hash_missing() {
         let mut fields = valid_payload_fields();
         fields.remove(&CONFIG_HASH);
-        let cbor = serialize_fields(fields);
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries, ConfigFormat::Android).unwrap_err();
     }
 
     #[test]
@@ -753,16 +803,119 @@ mod tests {
         })
         .unwrap();
         fields.insert(SUBJECT_PUBLIC_KEY, Value::Bytes(serialize(subject_public_key)));
-        let cbor = serialize_fields(fields);
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
+            .unwrap_err();
+        let profile = Profile { key_ops_type: KeyOpsType::IntOrArray, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
+    }
+
+    #[test]
+    fn extract_profile_version_named_profiles() {
+        let test_cases = [
+            ("android.14", ProfileVersion::Android14),
+            ("android.15", ProfileVersion::Android15),
+            ("android.16", ProfileVersion::Android16),
+        ];
+        for (profile_name, expected_version) in test_cases {
+            let mut fields = valid_payload_fields();
+            fields.insert(PROFILE_NAME, Value::from(profile_name));
+            let entries = encode_fields(fields);
+            let session = Session {
+                options: Options {
+                    dice_profile_range: DiceProfileRange::new(expected_version, expected_version),
+                },
+            };
+            let profile_version =
+                PayloadFields::extract_profile_version(&session, &entries).unwrap();
+            assert_eq!(profile_version, expected_version);
+        }
+    }
+
+    #[test]
+    fn extract_profile_version_named_android_13_fails() {
         let session = Session {
             options: Options {
-                dice_chain_key_ops_type: KeyOpsType::IntOrArray,
-                ..Options::default()
+                dice_profile_range: DiceProfileRange::new(
+                    ProfileVersion::Android13,
+                    ProfileVersion::Android16,
+                ),
             },
         };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let mut fields = valid_payload_fields();
+        fields.insert(PROFILE_NAME, Value::from("android.13"));
+        let entries = encode_fields(fields);
+        PayloadFields::extract_profile_version(&session, &entries).unwrap_err();
+    }
+
+    #[test]
+    fn extract_profile_version_multiple_profile_name_entries_fails() {
+        let session = Session {
+            options: Options {
+                dice_profile_range: DiceProfileRange::new(
+                    ProfileVersion::Android13,
+                    ProfileVersion::Android16,
+                ),
+            },
+        };
+        let mut fields = valid_payload_fields();
+        fields.insert(PROFILE_NAME, Value::from("android.15"));
+        let mut entries = encode_fields(fields);
+        entries.push((Value::from(PROFILE_NAME), Value::from("android.15")));
+        PayloadFields::extract_profile_version(&session, &entries).unwrap_err();
+    }
+
+    #[test]
+    fn extract_profile_version_out_of_range_fails() {
+        let session = Session {
+            options: Options {
+                dice_profile_range: DiceProfileRange::new(
+                    ProfileVersion::Android15,
+                    ProfileVersion::Android15,
+                ),
+            },
+        };
+        let mut fields = valid_payload_fields();
+        fields.insert(PROFILE_NAME, Value::from("android.14"));
+        let entries = encode_fields(fields.clone());
+        PayloadFields::extract_profile_version(&session, &entries).unwrap_err();
+        fields.insert(PROFILE_NAME, Value::from("android.16"));
+        let entries = encode_fields(fields);
+        PayloadFields::extract_profile_version(&session, &entries).unwrap_err();
+    }
+
+    #[test]
+    fn extract_profile_version_default_when_not_named_up_to_android_14() {
+        let entries = encode_fields(valid_payload_fields());
+        for expected_version in [ProfileVersion::Android13, ProfileVersion::Android14] {
+            let session = Session {
+                options: Options {
+                    dice_profile_range: DiceProfileRange::new(
+                        expected_version,
+                        ProfileVersion::Android16,
+                    ),
+                },
+            };
+            let profile_version =
+                PayloadFields::extract_profile_version(&session, &entries).unwrap();
+            assert_eq!(profile_version, expected_version);
+        }
+    }
+
+    #[test]
+    fn extract_profile_version_named_profile_required_from_android_15() {
+        let entries = encode_fields(valid_payload_fields());
+        for min_version in [ProfileVersion::Android15, ProfileVersion::Android16] {
+            let session = Session {
+                options: Options {
+                    dice_profile_range: DiceProfileRange::new(
+                        min_version,
+                        ProfileVersion::Android16,
+                    ),
+                },
+            };
+            PayloadFields::extract_profile_version(&session, &entries).unwrap_err();
+        }
     }
 
     fn valid_payload_fields() -> HashMap<i64, Value> {
@@ -783,8 +936,11 @@ mod tests {
         ])
     }
 
-    fn serialize_fields(mut fields: HashMap<i64, Value>) -> Vec<u8> {
-        let value = Value::Map(fields.drain().map(|(k, v)| (Value::from(k), v)).collect());
-        serialize(value)
+    fn encode_fields(mut fields: HashMap<i64, Value>) -> Vec<(Value, Value)> {
+        fields.drain().map(|(k, v)| (Value::from(k), v)).collect()
+    }
+
+    fn serialize_fields(fields: HashMap<i64, Value>) -> Vec<u8> {
+        serialize(Value::Map(encode_fields(fields)))
     }
 }
