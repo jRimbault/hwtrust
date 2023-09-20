@@ -1,7 +1,6 @@
 //! Parsing and encoding DICE chain from and to CBOR.
 
 use crate::cbor::cose_error;
-use crate::session::{KeyOpsType, Session};
 use anyhow::Result;
 use ciborium::value::Value;
 use coset::iana::{self, EnumI64};
@@ -9,11 +8,22 @@ use coset::{AsCborValue, CoseKey, Label};
 
 mod chain;
 mod entry;
+mod profile;
+
+/// Type allowed for the COSE_Key object key_ops field in the DICE chain.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum KeyOpsType {
+    /// The key_ops field must be an array as specified in the RFC 9052.
+    #[default]
+    Array,
+    /// The key_ops field can be either a single int or an array.
+    IntOrArray,
+}
 
 /// Convert a `Value` into a `CoseKey`, respecting the `Session` options that might alter the
 /// validation rules for `CoseKey`s in the DICE chain.
-fn cose_key_from_cbor_value(session: &Session, mut value: Value) -> Result<CoseKey> {
-    if session.options.dice_chain_key_ops_type == KeyOpsType::IntOrArray {
+fn cose_key_from_cbor_value(mut value: Value, key_ops_type: KeyOpsType) -> Result<CoseKey> {
+    if key_ops_type == KeyOpsType::IntOrArray {
         // Convert any integer key_ops into an array of the same integer so that the coset library
         // can handle it.
         if let Value::Map(ref mut entries) = value {
