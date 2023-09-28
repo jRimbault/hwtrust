@@ -214,6 +214,10 @@ impl FieldValue {
             .transpose()
     }
 
+    pub fn into_u64(self) -> Result<u64, FieldValueError> {
+        require_present(self.name, self.into_optional_u64())
+    }
+
     pub fn into_optional_u64(self) -> Result<Option<u64>, FieldValueError> {
         self.value
             .map(|v| {
