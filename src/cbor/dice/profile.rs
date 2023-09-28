@@ -31,6 +31,9 @@ pub(super) struct Profile {
     /// descriptor. This allows for compatibility with early versions of the RKP HAL which did not
     /// enforce the requirements on the configuration hash as defined by the Open Profile for DICE.
     pub(super) config_hash_unverified: bool,
+
+    /// Whether the security version is a required field in the configuration descriptor.
+    pub(super) security_version_optional: bool,
 }
 
 /// Type allowed for the DICE certificate mode field.
@@ -63,6 +66,7 @@ impl Profile {
             // Context: b/273552826
             component_version_type: ComponentVersionType::Int,
             config_hash_unverified: true,
+            security_version_optional: true,
             ..Self::default()
         }
     }
@@ -74,13 +78,14 @@ impl Profile {
             mode_type: ModeType::IntOrBytes,
             allow_big_endian_key_usage: true,
             config_hash_unverified: true,
+            security_version_optional: true,
             ..Self::default()
         }
     }
 
     /// The rules for the "android.15" profile.
     pub(super) fn android15() -> Self {
-        Self { config_hash_unverified: true, ..Self::default() }
+        Self { config_hash_unverified: true, security_version_optional: true, ..Self::default() }
     }
 
     /// The rules for the "android.16" profile..

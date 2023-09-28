@@ -339,13 +339,20 @@ fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc>
     let extensions =
         extensions.into_iter().map(|(k, v)| (k.to_string(), format!("{v:?}"))).collect();
 
+    let security_version = if profile.security_version_optional {
+        security_version.into_optional_u64()
+    } else {
+        security_version.into_u64().map(Some)
+    }
+    .context("Security version")?;
+
     Ok(ConfigDescBuilder::new()
         .component_name(component_name.into_optional_string().context("Component name")?)
         .component_version(
             validate_version(profile, component_version).context("Component version")?,
         )
         .resettable(resettable.is_null().context("Resettable")?)
-        .security_version(security_version.into_optional_u64().context("Security version")?)
+        .security_version(security_version)
         .extensions(extensions)
         .build())
 }
@@ -727,7 +734,9 @@ mod tests {
     #[test]
     fn config_desc_component_version_string() {
         let mut fields = valid_payload_fields();
-        let config_desc = serialize(cbor!({COMPONENT_VERSION => "It's version 4"}).unwrap());
+        let config_desc = serialize(
+            cbor!({COMPONENT_VERSION => "It's version 4", SECURITY_VERSION => 99999999}).unwrap(),
+        );
         let config_hash = sha512(&config_desc).to_vec();
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
@@ -746,7 +755,7 @@ mod tests {
     #[test]
     fn config_desc_security_version() {
         let mut fields = valid_payload_fields();
-        let config_desc = serialize(cbor!({SECURITY_VERSION => Value::from(0x12345678)}).unwrap());
+        let config_desc = serialize(cbor!({SECURITY_VERSION => 0x12345678}).unwrap());
         let config_hash = sha512(&config_desc).to_vec();
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
@@ -754,6 +763,21 @@ mod tests {
         let session = Session { options: Options::default() };
         let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
         assert_eq!(payload.config_desc().security_version(), Some(0x12345678));
+    }
+
+    #[test]
+    fn config_desc_security_version_omitted() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({}).unwrap());
+        let config_hash = sha512(&config_desc).to_vec();
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
+        let entries = encode_fields(fields);
+        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
+            .unwrap_err();
+        let profile = Profile { security_version_optional: true, ..Profile::default() };
+        let payload = Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
+        assert_eq!(payload.config_desc().security_version(), None);
     }
 
     #[test]
@@ -921,7 +945,9 @@ mod tests {
     fn valid_payload_fields() -> HashMap<i64, Value> {
         let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]).public_key();
         let subject_public_key = key.to_cose_key().unwrap().to_vec().unwrap();
-        let config_desc = serialize(cbor!({COMPONENT_NAME => "component name"}).unwrap());
+        let config_desc = serialize(
+            cbor!({COMPONENT_NAME => "component name", SECURITY_VERSION => 1234}).unwrap(),
+        );
         let config_hash = sha512(&config_desc).to_vec();
         HashMap::from([
             (ISS, Value::from("issuer")),
