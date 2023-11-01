@@ -1,6 +1,6 @@
 use super::cose_key_from_cbor_value;
 use super::profile::{ComponentVersionType, ModeType, Profile};
-use crate::cbor::{cose_error, field_value::FieldValue, value_from_bytes};
+use crate::cbor::{field_value::FieldValue, value_from_bytes};
 use crate::dice::{
     ComponentVersion, ConfigDesc, ConfigDescBuilder, DiceMode, Payload, PayloadBuilder,
     ProfileVersion,
@@ -42,7 +42,6 @@ pub(super) struct Entry {
 impl Entry {
     pub(super) fn verify_cbor_value(cbor: Value, key: &PublicKey) -> Result<Self> {
         let sign1 = CoseSign1::from_cbor_value(cbor)
-            .map_err(cose_error)
             .context("Given CBOR does not appear to be a COSE_sign1")?;
         key.verify_cose_sign1(&sign1, b"").context("cannot verify COSE_sign1")?;
         match sign1.payload {
@@ -393,8 +392,7 @@ mod tests {
 
     impl Payload {
         pub(in super::super) fn to_cbor_value(&self) -> Result<Value> {
-            let subject_public_key =
-                self.subject_public_key().to_cose_key()?.to_vec().map_err(cose_error)?;
+            let subject_public_key = self.subject_public_key().to_cose_key()?.to_vec()?;
             let config_desc = serialize(self.config_desc().to_cbor_value());
             let mut map = vec![
                 (Value::from(ISS), Value::from(self.issuer())),
