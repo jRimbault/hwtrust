@@ -8,10 +8,6 @@ pub(crate) mod rkp;
 use ciborium::{de::from_reader, value::Value};
 use std::io::Read;
 
-fn cose_error(ce: coset::CoseError) -> anyhow::Error {
-    anyhow::anyhow!("CoseError: {:?}", ce)
-}
-
 type CiboriumError = ciborium::de::Error<std::io::Error>;
 
 /// Decodes the provided binary CBOR-encoded value and returns a
