@@ -1,6 +1,5 @@
 //! Parsing and encoding DICE chain from and to CBOR.
 
-use crate::cbor::cose_error;
 use anyhow::Result;
 use ciborium::value::Value;
 use coset::iana::{self, EnumI64};
@@ -28,12 +27,12 @@ fn cose_key_from_cbor_value(mut value: Value, key_ops_type: KeyOpsType) -> Resul
         // can handle it.
         if let Value::Map(ref mut entries) = value {
             for (label, value) in entries.iter_mut() {
-                let label = Label::from_cbor_value(label.clone()).map_err(cose_error)?;
+                let label = Label::from_cbor_value(label.clone())?;
                 if label == Label::Int(iana::KeyParameter::KeyOps.to_i64()) && value.is_integer() {
                     *value = Value::Array(vec![value.clone()]);
                 }
             }
         }
     }
-    CoseKey::from_cbor_value(value).map_err(cose_error)
+    Ok(CoseKey::from_cbor_value(value)?)
 }
