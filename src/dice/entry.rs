@@ -18,7 +18,7 @@ pub enum DiceMode {
 }
 
 /// The payload of a DICE chain entry.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Payload {
     issuer: String,
     subject: String,
@@ -104,6 +104,28 @@ impl Display for Payload {
         write!(f, "{}", &self.config_desc)?;
         writeln!(f, "}}")?;
         Ok(())
+    }
+}
+
+impl fmt::Debug for Payload {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        let mut debug = f.debug_struct("Payload");
+        debug.field("Issuer", &self.issuer);
+        debug.field("Subject", &self.subject);
+        debug.field("Mode", &self.mode);
+        if let Some(code_desc) = &self.code_desc {
+            debug.field("Code Desc", &hex::encode(code_desc));
+        }
+        debug.field("Code Hash", &hex::encode(&self.code_hash));
+        if let Some(config_hash) = &self.config_hash {
+            debug.field("Config Hash", &hex::encode(config_hash));
+        }
+        if let Some(authority_desc) = &self.authority_desc {
+            debug.field("Authority Desc", &hex::encode(authority_desc));
+        }
+        debug.field("Authority Hash", &hex::encode(&self.authority_hash));
+        debug.field("Config Desc", &self.config_desc);
+        debug.finish()
     }
 }
 

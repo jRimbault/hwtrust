@@ -16,7 +16,7 @@ pub enum ChainForm {
 
 /// Represents a DICE chain. This consists of the root public key (which signs the first
 /// certificate), followed by a chain of certificates.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Chain {
     root_public_key: PublicKey,
     payloads: Vec<Payload>,
@@ -109,6 +109,17 @@ impl Display for Chain {
             writeln!(f, "{}", payload)?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Debug for Chain {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let mut debug = fmt.debug_struct("Chain");
+        debug.field("Root public key", &self.root_public_key.to_pem());
+        for (i, payload) in self.payloads.iter().enumerate() {
+            debug.field(&format!("DICE Certificate[{i}]"), payload);
+        }
+        debug.finish()
     }
 }
 
