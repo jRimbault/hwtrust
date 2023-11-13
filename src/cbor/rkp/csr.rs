@@ -1,5 +1,6 @@
 use crate::cbor::field_value::FieldValue;
 use crate::cbor::value_from_bytes;
+use crate::dice::Chain;
 use crate::rkp::{Csr, DeviceInfo, ProtectedData};
 use crate::session::Session;
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -74,7 +75,7 @@ impl Csr {
     }
 
     fn v3_from_authenticated_request(
-        _session: &Session,
+        session: &Session,
         mut csr: Vec<Value>,
         version: i128,
     ) -> Result<Self> {
@@ -90,6 +91,8 @@ impl Csr {
 
         let signed_data =
             FieldValue::from_optional_value("SignedData", csr.pop()).into_cose_sign1()?;
+        let dice_chain =
+            Chain::from_value(session, csr.pop().ok_or(anyhow!("Missing DiceCertChain"))?)?;
 
         let signed_data_payload = signed_data.payload.context("missing payload in SignedData")?;
         let csr_payload_value = value_from_bytes(&signed_data_payload)
@@ -113,7 +116,7 @@ impl Csr {
             FieldValue::from_optional_value("CertificateType", csr_payload.pop());
 
         let device_info = DeviceInfo::from_cbor_values(device_info.into_map()?, Some(3))?;
-        Ok(Self::V3 { device_info })
+        Ok(Self::V3 { device_info, dice_chain })
     }
 }
 
@@ -123,7 +126,8 @@ mod tests {
     // generation spits out full JSON files, not just a CSR. Therefore, only a
     // minimal number of smoke tests are here.
     use super::*;
-    use crate::dice::{ChainForm, DegenerateChain};
+    use crate::cbor::rkp::csr::testutil::{parse_pem_public_key_or_panic, test_device_info};
+    use crate::dice::{ChainForm, DegenerateChain, DiceMode};
     use crate::rkp::DeviceInfoVersion;
     use std::fs;
 
@@ -139,8 +143,7 @@ mod tests {
                    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERd9pHZbUJ/b4IleUGDN8fs8+LDxE\n\
                    vG6VX1dkw0sClFs4imbzfXGbocEq74S7TQiyZkd1LhY6HRZnTC51KoGDIA==\n\
                    -----END PUBLIC KEY-----\n";
-        let subject_public_key =
-            openssl::pkey::PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
+        let subject_public_key = testutil::parse_pem_public_key_or_panic(pem);
         let degenerate = ChainForm::Degenerate(
             DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
         );
@@ -152,7 +155,33 @@ mod tests {
     fn from_base64_valid_v3() {
         let input = fs::read_to_string("testdata/csr/v3_csr.base64").unwrap().trim().to_owned();
         let csr = Csr::from_base64_cbor(&Session::default(), &input).unwrap();
-        assert_eq!(csr, Csr::V3 { device_info: testutil::test_device_info(DeviceInfoVersion::V3) });
+        if let Csr::V3 { device_info, dice_chain } = csr {
+            assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
+            let root_public_key = parse_pem_public_key_or_panic(
+                "-----BEGIN PUBLIC KEY-----\n\
+                MCowBQYDK2VwAyEA3FEn/nhqoGOKNok1AJaLfTKI+aFXHf4TfC42vUyPU6s=\n\
+                -----END PUBLIC KEY-----\n",
+            );
+            assert_eq!(dice_chain.root_public_key(), &root_public_key);
+            let payloads = dice_chain.payloads();
+            assert_eq!(payloads.len(), 1);
+            assert_eq!(payloads[0].issuer(), "issuer");
+            assert_eq!(payloads[0].subject(), "subject");
+            assert_eq!(payloads[0].mode(), DiceMode::Normal);
+            assert_eq!(payloads[0].code_hash(), &[0x55; 32]);
+            let expected_config_hash: &[u8] =
+                b"\xb8\x96\x54\xe2\x2c\xa4\xd2\x4a\x9c\x0e\x45\x11\xc8\xf2\x63\xf0\
+                  \x66\x0d\x2e\x20\x48\x96\x90\x14\xf4\x54\x63\xc4\xf4\x39\x30\x38";
+            assert_eq!(payloads[0].config_hash(), Some(expected_config_hash));
+            assert_eq!(payloads[0].authority_hash(), &[0x55; 32]);
+            assert_eq!(payloads[0].config_desc().component_name(), Some("component_name"));
+            assert_eq!(payloads[0].config_desc().component_version(), None);
+            assert!(!payloads[0].config_desc().resettable());
+            assert_eq!(payloads[0].config_desc().security_version(), None);
+            assert_eq!(payloads[0].config_desc().extensions(), []);
+        } else {
+            panic!("Parsed CSR was not V3: {:?}", csr);
+        }
     }
 
     #[test]
@@ -176,10 +205,17 @@ mod tests {
 
 #[cfg(test)]
 pub(crate) mod testutil {
+    use crate::publickey::PublicKey;
     use crate::rkp::{
         DeviceInfo, DeviceInfoBootloaderState, DeviceInfoSecurityLevel, DeviceInfoVbState,
         DeviceInfoVersion,
     };
+    use openssl::pkey::PKey;
+
+    // Parse the given PEM-encoded public key into a PublicKey object, panicking on failure.
+    pub fn parse_pem_public_key_or_panic(pem: &str) -> PublicKey {
+        PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap()
+    }
 
     // The test data uses mostly common DeviceInfo fields
     pub fn test_device_info(version: DeviceInfoVersion) -> DeviceInfo {
