@@ -4,14 +4,14 @@ use crate::dice::ProfileVersion;
 use std::ops::RangeInclusive;
 
 /// The context for a session handling hwtrust data structures.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Session {
     /// Options that control the behaviour during this session.
     pub options: Options,
 }
 
 /// Options that control the behaviour of a session.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Options {
     /// The range of supported Android Profile for DICE versions.
     pub dice_profile_range: DiceProfileRange,
