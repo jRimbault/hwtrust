@@ -46,14 +46,14 @@ impl FactoryCsr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cbor::rkp::csr::testutil::test_device_info;
+    use crate::cbor::rkp::csr::testutil::{parse_pem_public_key_or_panic, test_device_info};
     use crate::dice::{ChainForm, DegenerateChain};
     use crate::rkp::device_info::DeviceInfoVersion;
     use crate::rkp::factory_csr::FactoryCsr;
     use crate::rkp::{ProtectedData, UdsCerts, UdsCertsEntry};
     use anyhow::anyhow;
     use itertools::Itertools;
-    use openssl::x509::X509;
+    use openssl::{pkey::PKey, x509::X509};
     use std::fs;
     use std::fs::File;
 
@@ -69,11 +69,11 @@ mod tests {
     fn from_json_valid_v2_ed25519() {
         let json = fs::read_to_string("testdata/factory_csr/v2_ed25519_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        let pem = "-----BEGIN PUBLIC KEY-----\n\
-                   MCowBQYDK2VwAyEAOhWsfxcBLgUfLLdqpb8cLUWutkkPtfIqDRfJC3LUihI=\n\
-                   -----END PUBLIC KEY-----\n";
-        let subject_public_key =
-            openssl::pkey::PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
+        let subject_public_key = parse_pem_public_key_or_panic(
+            "-----BEGIN PUBLIC KEY-----\n\
+            MCowBQYDK2VwAyEAOhWsfxcBLgUfLLdqpb8cLUWutkkPtfIqDRfJC3LUihI=\n\
+            -----END PUBLIC KEY-----\n",
+        );
         let degenerate = ChainForm::Degenerate(
             DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
         );
@@ -126,13 +126,18 @@ mod tests {
     fn from_json_valid_v3_ed25519() {
         let json = fs::read_to_string("testdata/factory_csr/v3_ed25519_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        assert_eq!(
-            csr,
-            FactoryCsr {
-                csr: Csr::V3 { device_info: test_device_info(DeviceInfoVersion::V3) },
-                name: "default".to_string(),
-            }
-        );
+        if let Csr::V3 { device_info, dice_chain } = csr.csr {
+            assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
+            let root_public_key = parse_pem_public_key_or_panic(
+                "-----BEGIN PUBLIC KEY-----\n\
+                MCowBQYDK2VwAyEA3FEn/nhqoGOKNok1AJaLfTKI+aFXHf4TfC42vUyPU6s=\n\
+                -----END PUBLIC KEY-----\n",
+            );
+            assert_eq!(dice_chain.root_public_key(), &root_public_key);
+            assert_eq!(dice_chain.payloads().len(), 1);
+        } else {
+            panic!("Parsed CSR was not V3: {:?}", csr);
+        }
     }
 
     #[test]
@@ -144,7 +149,7 @@ mod tests {
                    vG6VX1dkw0sClFs4imbzfXGbocEq74S7TQiyZkd1LhY6HRZnTC51KoGDIA==\n\
                    -----END PUBLIC KEY-----\n";
         let subject_public_key =
-            openssl::pkey::PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
+            PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
         let degenerate = ChainForm::Degenerate(
             DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
         );
@@ -166,13 +171,19 @@ mod tests {
     fn from_json_valid_v3_p256() {
         let json = fs::read_to_string("testdata/factory_csr/v3_p256_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        assert_eq!(
-            csr,
-            FactoryCsr {
-                csr: Csr::V3 { device_info: test_device_info(DeviceInfoVersion::V3) },
-                name: "default".to_string(),
-            }
-        );
+        if let Csr::V3 { device_info, dice_chain } = csr.csr {
+            assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
+            let root_public_key = parse_pem_public_key_or_panic(
+                "-----BEGIN PUBLIC KEY-----\n\
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEqT6ujVegwBbVWtsZeZmvN4WO3THx\n\
+                zpPPnt2rAOdqL9DSDZcIBbLas5xh9psaEaD0o/0KxlUVZplO/BPmRf3Ycg==\n\
+                -----END PUBLIC KEY-----\n",
+            );
+            assert_eq!(dice_chain.root_public_key(), &root_public_key);
+            assert_eq!(dice_chain.payloads().len(), 1);
+        } else {
+            panic!("Parsed CSR was not V3: {:?}", csr);
+        }
     }
 
     #[test]

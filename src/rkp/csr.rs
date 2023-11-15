@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::rkp::DeviceInfo;
+use crate::{dice::Chain, rkp::DeviceInfo};
 
 use super::ProtectedData;
 
@@ -24,6 +24,8 @@ pub enum Csr {
     V3 {
         /// Describes the device that is requesting certificates.
         device_info: DeviceInfo,
+        /// The DICE chain for the device
+        dice_chain: Chain,
     },
 }
 
@@ -36,9 +38,11 @@ impl fmt::Debug for Csr {
                 .field("Challenge", &hex::encode(challenge))
                 .field("ProtectedData", &protected_data)
                 .finish(),
-            Csr::V3 { device_info } => {
-                fmt.debug_struct("CSR V3").field("DeviceInfo", &device_info).finish()
-            }
+            Csr::V3 { device_info, dice_chain } => fmt
+                .debug_struct("CSR V3")
+                .field("DeviceInfo", &device_info)
+                .field("DiceChain", &dice_chain)
+                .finish(),
         }
     }
 }
