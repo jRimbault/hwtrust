@@ -278,6 +278,7 @@ pub struct ConfigDesc {
     component_version: Option<ComponentVersion>,
     resettable: bool,
     security_version: Option<u64>,
+    rkp_vm_marker: bool,
     extensions: Vec<(String, String)>,
 }
 
@@ -302,6 +303,11 @@ impl ConfigDesc {
         self.security_version
     }
 
+    /// Returns whether the component may be part of an RPK VM.
+    pub fn rkp_vm_marker(&self) -> bool {
+        self.rkp_vm_marker
+    }
+
     /// Return any extensions present in the descriptor.
     pub fn extensions(&self) -> &[(String, String)] {
         &self.extensions
@@ -321,6 +327,9 @@ impl Display for ConfigDesc {
         }
         if let Some(security_version) = &self.security_version {
             writeln!(f, "Security Version: {}", security_version)?;
+        }
+        if self.rkp_vm_marker {
+            writeln!(f, "RKP VM Marker")?;
         }
         for (key, value) in &self.extensions {
             writeln!(f, "{key}: {value}")?;
@@ -367,6 +376,13 @@ impl ConfigDescBuilder {
     #[must_use]
     pub fn security_version(mut self, version: Option<u64>) -> Self {
         self.0.security_version = version;
+        self
+    }
+
+    /// Sets whether the component may be part of an RKP VM.
+    #[must_use]
+    pub fn rkp_vm_marker(mut self, rkp_vm_marker: bool) -> Self {
+        self.0.rkp_vm_marker = rkp_vm_marker;
         self
     }
 
