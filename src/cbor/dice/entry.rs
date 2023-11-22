@@ -34,6 +34,7 @@ const COMPONENT_NAME: i64 = -70002;
 const COMPONENT_VERSION: i64 = -70003;
 const RESETTABLE: i64 = -70004;
 const SECURITY_VERSION: i64 = -70005;
+const RKP_VM_MARKER: i64 = -70006;
 
 pub(super) struct Entry {
     payload: Vec<u8>,
@@ -307,6 +308,7 @@ fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc>
     let mut component_version = FieldValue::new("component version");
     let mut resettable = FieldValue::new("resettable");
     let mut security_version = FieldValue::new("security version");
+    let mut rkp_vm_marker = FieldValue::new("rkp vm marker");
     let mut extensions = HashMap::new();
 
     for (key, value) in entries.into_iter() {
@@ -316,6 +318,7 @@ fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc>
                 COMPONENT_VERSION => &mut component_version,
                 RESETTABLE => &mut resettable,
                 SECURITY_VERSION => &mut security_version,
+                RKP_VM_MARKER => &mut rkp_vm_marker,
                 key if (CONFIG_DESC_RESERVED_MIN..=CONFIG_DESC_RESERVED_MAX).contains(&key) => {
                     bail!("Reserved key {}", key);
                 }
@@ -352,6 +355,7 @@ fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc>
         )
         .resettable(resettable.is_null().context("Resettable")?)
         .security_version(security_version)
+        .rkp_vm_marker(rkp_vm_marker.is_null().context("RKP VM marker")?)
         .extensions(extensions)
         .build())
 }
@@ -437,6 +441,9 @@ mod tests {
             }
             if let Some(security_version) = self.security_version() {
                 map.push((Value::from(SECURITY_VERSION), Value::from(security_version)));
+            }
+            if self.rkp_vm_marker() {
+                map.push((Value::from(RKP_VM_MARKER), Value::Null));
             }
             Value::Map(map)
         }
@@ -803,6 +810,46 @@ mod tests {
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
         Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+    }
+
+    #[test]
+    fn config_desc_resettable() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({RESETTABLE => null}).unwrap());
+        let config_hash = sha512(&config_desc).to_vec();
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        assert!(payload.config_desc().resettable());
+    }
+
+    #[test]
+    fn config_desc_rkp_vm_marker() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({RKP_VM_MARKER => null}).unwrap());
+        let config_hash = sha512(&config_desc).to_vec();
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        assert!(payload.config_desc().rkp_vm_marker());
+    }
+
+    #[test]
+    fn config_desc_nulls_omitted() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({}).unwrap());
+        let config_hash = sha512(&config_desc).to_vec();
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        assert!(!payload.config_desc().resettable());
+        assert!(!payload.config_desc().rkp_vm_marker());
     }
 
     #[test]
