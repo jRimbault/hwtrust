@@ -22,9 +22,9 @@ pub struct DeviceInfo {
     /// the same underlying device.
     pub device: String,
     /// Verified boot state.
-    pub vb_state: DeviceInfoVbState,
+    pub vb_state: Option<DeviceInfoVbState>,
     /// Whether the bootloader is locked or not.
-    pub bootloader_state: DeviceInfoBootloaderState,
+    pub bootloader_state: Option<DeviceInfoBootloaderState>,
     /// Digest of the verified boot metadata structures.
     pub vbmeta_digest: Vec<u8>,
     /// Partner-defined operating system version.
@@ -45,6 +45,9 @@ impl fmt::Debug for DeviceInfo {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let security_level: &dyn fmt::Debug = self.security_level.as_ref().map_or(&"<none>", |s| s);
         let os_version: &dyn fmt::Debug = self.os_version.as_ref().map_or(&"<none>", |v| v);
+        let bootloader_state: &dyn fmt::Debug =
+            self.bootloader_state.as_ref().map_or(&"<none>", |v| v);
+        let vb_state: &dyn fmt::Debug = self.vb_state.as_ref().map_or(&"<none>", |v| v);
 
         fmt.debug_struct("DeviceInfo")
             .field("version", &self.version)
@@ -53,8 +56,8 @@ impl fmt::Debug for DeviceInfo {
             .field("product", &self.product)
             .field("model", &self.model)
             .field("device", &self.device)
-            .field("vb_state", &self.vb_state)
-            .field("bootloader_state", &self.bootloader_state)
+            .field("vb_state", vb_state)
+            .field("bootloader_state", bootloader_state)
             .field("vbmeta_digest", &hex::encode(&self.vbmeta_digest))
             .field("os_version", os_version)
             .field("system_patch_level", &self.system_patch_level)
