@@ -73,6 +73,8 @@ pub enum DeviceInfoBootloaderState {
     Locked,
     /// The bootloader will load arbitrary images.
     Unlocked,
+    /// This field is a placeholder for the AVF backend.
+    Avf,
 }
 
 impl TryFrom<&str> for DeviceInfoBootloaderState {
@@ -82,6 +84,7 @@ impl TryFrom<&str> for DeviceInfoBootloaderState {
         match s.to_ascii_lowercase().as_str() {
             "locked" => Ok(Self::Locked),
             "unlocked" => Ok(Self::Unlocked),
+            "avf" => Ok(Self::Avf),
             _ => Err(anyhow!("Invalid bootloader state: `{s}`")),
         }
     }
@@ -96,6 +99,8 @@ pub enum DeviceInfoVbState {
     Yellow,
     /// The bootloader is unlocked, and no guarantees of image integrity are available.
     Orange,
+    /// This field is a placeholder for the AVF backend.
+    Avf,
 }
 
 impl TryFrom<&str> for DeviceInfoVbState {
@@ -106,6 +111,7 @@ impl TryFrom<&str> for DeviceInfoVbState {
             "green" => Ok(Self::Green),
             "yellow" => Ok(Self::Yellow),
             "orange" => Ok(Self::Orange),
+            "avf" => Ok(Self::Avf),
             _ => Err(anyhow!("Invalid VB state: `{s}`")),
         }
     }
@@ -139,6 +145,8 @@ pub enum DeviceInfoSecurityLevel {
     Tee,
     /// KeyMint's backend runs in a Secure Element.
     StrongBox,
+    /// AVF's backend.
+    Avf,
 }
 
 impl TryFrom<&str> for DeviceInfoSecurityLevel {
@@ -148,6 +156,7 @@ impl TryFrom<&str> for DeviceInfoSecurityLevel {
         match s.to_ascii_lowercase().as_str() {
             "strongbox" => Ok(Self::StrongBox),
             "tee" => Ok(Self::Tee),
+            "avf" => Ok(Self::Avf),
             _ => Err(anyhow!("Invalid security level: `{s}`")),
         }
     }
