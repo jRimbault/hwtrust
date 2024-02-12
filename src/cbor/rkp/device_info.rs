@@ -61,6 +61,14 @@ impl DeviceInfo {
             Some(s) => Some(s.as_str().try_into()?),
             None => None,
         };
+        let bootloader_state = match bootloader_state.into_optional_string()? {
+            Some(s) => Some(s.as_str().try_into()?),
+            None => None,
+        };
+        let vb_state = match vb_state.into_optional_string()? {
+            Some(s) => Some(s.as_str().try_into()?),
+            None => None,
+        };
 
         Ok(DeviceInfo {
             brand: brand.into_string()?,
@@ -68,8 +76,8 @@ impl DeviceInfo {
             product: product.into_string()?,
             model: model.into_string()?,
             device: device.into_string()?,
-            vb_state: vb_state.into_string()?.as_str().try_into()?,
-            bootloader_state: bootloader_state.into_string()?.as_str().try_into()?,
+            vb_state,
+            bootloader_state,
             vbmeta_digest: vbmeta_digest.into_bytes()?,
             os_version: os_version.into_optional_string()?,
             system_patch_level: system_patch_level.into_u32()?,
@@ -113,8 +121,8 @@ mod tests {
             product: "phone".to_string(),
             model: "the best one".to_string(),
             device: "really the best".to_string(),
-            vb_state: DeviceInfoVbState::Green,
-            bootloader_state: DeviceInfoBootloaderState::Locked,
+            vb_state: Some(DeviceInfoVbState::Green),
+            bootloader_state: Some(DeviceInfoBootloaderState::Locked),
             vbmeta_digest: b"abcdefg".to_vec(),
             os_version: Some("dessert".to_string()),
             system_patch_level: 303010,
@@ -137,8 +145,8 @@ mod tests {
             product: "phone".to_string(),
             model: "the best one".to_string(),
             device: "really the best".to_string(),
-            vb_state: DeviceInfoVbState::Green,
-            bootloader_state: DeviceInfoBootloaderState::Locked,
+            vb_state: Some(DeviceInfoVbState::Green),
+            bootloader_state: Some(DeviceInfoBootloaderState::Locked),
             vbmeta_digest: b"abcdefg".to_vec(),
             os_version: Some("dessert".to_string()),
             system_patch_level: 303010,
