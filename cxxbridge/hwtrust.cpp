@@ -53,4 +53,8 @@ Result<std::vector<std::vector<uint8_t>>> DiceChain::CosePublicKeys() const noex
   return result;
 }
 
+bool DiceChain::IsProper() const noexcept {
+  return rust::IsDiceChainProper(*chain_->chain);
+}
+
 } // namespace hwtrust
