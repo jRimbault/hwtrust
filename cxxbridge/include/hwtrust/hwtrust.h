@@ -26,6 +26,8 @@ public:
 
   android::base::Result<std::vector<std::vector<uint8_t>>> CosePublicKeys() const noexcept;
 
+  bool IsProper() const noexcept;
+
 private:
   DiceChain(std::unique_ptr<BoxedDiceChain> chain, size_t size) noexcept;
 

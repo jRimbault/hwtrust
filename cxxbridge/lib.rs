@@ -40,6 +40,9 @@ mod ffi {
 
         #[cxx_name = GetDiceChainPublicKey]
         fn get_dice_chain_public_key(chain: &DiceChain, n: usize) -> Vec<u8>;
+
+        #[cxx_name = IsDiceChainProper]
+        fn is_dice_chain_proper(chain: &DiceChain) -> bool;
     }
 }
 
@@ -91,4 +94,15 @@ fn get_dice_chain_public_key(chain: &DiceChain, n: usize) -> Vec<u8> {
         }
     }
     Vec::new()
+}
+
+fn is_dice_chain_proper(chain: &DiceChain) -> bool {
+    if let DiceChain(Some(chain)) = chain {
+        match chain {
+            ChainForm::Proper(_) => true,
+            ChainForm::Degenerate(_) => false,
+        }
+    } else {
+        false
+    }
 }
