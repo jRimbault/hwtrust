@@ -8,7 +8,7 @@ fn hwtrust_bin() -> &'static str {
 #[test]
 fn exit_code_for_good_chain() {
     let output = Command::new(hwtrust_bin())
-        .args(["dice-chain", "testdata/dice/valid_ed25519.chain"])
+        .args(["dice-chain", "--allow-any-mode", "testdata/dice/valid_ed25519.chain"])
         .output()
         .unwrap();
     assert!(output.status.success());

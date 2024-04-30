@@ -15,6 +15,15 @@ pub struct Session {
 pub struct Options {
     /// The range of supported Android Profile for DICE versions.
     pub dice_profile_range: DiceProfileRange,
+    /// Allows DICE chains to have non-normal mode values.
+    pub allow_any_mode: bool,
+}
+
+impl Session {
+    /// Set allow_any_mode.
+    pub fn set_allow_any_mode(&mut self, allow_any_mode: bool) {
+        self.options.allow_any_mode = allow_any_mode
+    }
 }
 
 /// An inclusive range of Android Profile for DICE versions.
@@ -57,6 +66,7 @@ impl Options {
                 ProfileVersion::Android13,
                 ProfileVersion::Android13,
             ),
+            ..Default::default()
         }
     }
 
@@ -67,6 +77,7 @@ impl Options {
                 ProfileVersion::Android14,
                 ProfileVersion::Android14,
             ),
+            ..Default::default()
         }
     }
 
@@ -77,6 +88,7 @@ impl Options {
                 ProfileVersion::Android14,
                 ProfileVersion::Android15,
             ),
+            ..Default::default()
         }
     }
 
@@ -87,6 +99,7 @@ impl Options {
                 ProfileVersion::Android14,
                 ProfileVersion::Android16,
             ),
+            ..Default::default()
         }
     }
 }
