@@ -135,6 +135,12 @@ pub(crate) enum PayloadBuilderError {
     IssuerEmpty,
     #[error("subject empty")]
     SubjectEmpty,
+    #[error("bad code hash size, actual: {0}, expected: 32, 48, or 64")]
+    CodeHashSize(usize),
+    #[error("bad config hash size, actual: {0}, expected: {1}")]
+    ConfigHashSize(usize, usize),
+    #[error("bad authority hash size, actual: {0}, expected: {1}")]
+    AuthorityHashSize(usize, usize),
 }
 
 pub(crate) struct PayloadBuilder(Payload);
@@ -156,13 +162,28 @@ impl PayloadBuilder {
         })
     }
 
-    /// Builds the [`Payload`] after validating the issuer and subject.
+    /// Builds the [`Payload`] after validating the fields.
     pub fn build(self) -> Result<Payload, PayloadBuilderError> {
         if self.0.issuer.is_empty() {
             return Err(PayloadBuilderError::IssuerEmpty);
         }
         if self.0.subject.is_empty() {
             return Err(PayloadBuilderError::SubjectEmpty);
+        }
+        let used_hash_size = self.0.code_hash.len();
+        if ![32, 48, 64].contains(&used_hash_size) {
+            return Err(PayloadBuilderError::CodeHashSize(used_hash_size));
+        }
+        if let Some(ref config_hash) = self.0.config_hash {
+            if config_hash.len() != used_hash_size {
+                return Err(PayloadBuilderError::ConfigHashSize(config_hash.len(), used_hash_size));
+            }
+        }
+        if self.0.authority_hash.len() != used_hash_size {
+            return Err(PayloadBuilderError::AuthorityHashSize(
+                self.0.authority_hash.len(),
+                used_hash_size,
+            ));
         }
         Ok(self.0)
     }
@@ -423,6 +444,41 @@ mod tests {
     fn payload_builder_empty_subject() {
         let err = valid_payload().subject("").build().unwrap_err();
         assert_eq!(err, PayloadBuilderError::SubjectEmpty);
+    }
+
+    #[test]
+    fn payload_builder_bad_code_hash_size() {
+        let err = valid_payload().code_hash(vec![1; 16]).build().unwrap_err();
+        assert_eq!(err, PayloadBuilderError::CodeHashSize(16));
+    }
+
+    #[test]
+    fn payload_builder_bad_authority_hash_size() {
+        let err = valid_payload().authority_hash(vec![1; 16]).build().unwrap_err();
+        assert_eq!(err, PayloadBuilderError::AuthorityHashSize(16, 64));
+    }
+
+    #[test]
+    fn payload_builder_inconsistent_authority_hash_size() {
+        let err =
+            valid_payload().code_hash(vec![1; 32]).authority_hash(vec![1; 64]).build().unwrap_err();
+        assert_eq!(err, PayloadBuilderError::AuthorityHashSize(64, 32));
+    }
+
+    #[test]
+    fn payload_builder_bad_config_hash_size() {
+        let err = valid_payload().config_hash(Some(vec![1; 16])).build().unwrap_err();
+        assert_eq!(err, PayloadBuilderError::ConfigHashSize(16, 64));
+    }
+
+    #[test]
+    fn payload_builder_inconsistent_config_hash_size() {
+        let err = valid_payload()
+            .code_hash(vec![1; 64])
+            .config_hash(Some(vec![1; 32]))
+            .build()
+            .unwrap_err();
+        assert_eq!(err, PayloadBuilderError::ConfigHashSize(32, 64));
     }
 
     fn valid_payload() -> PayloadBuilder {
