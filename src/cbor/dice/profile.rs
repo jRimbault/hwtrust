@@ -37,6 +37,9 @@ pub(super) struct Profile {
 
     /// Whether the root certificate is allowed to have its mode set to debug.
     pub(super) allow_root_mode_debug: bool,
+
+    /// Whether the root certificate's authority hash size is allowed to differ from its code hash size.
+    pub(super) allow_root_varied_auth_hash_size: bool,
 }
 
 /// Type allowed for the DICE certificate mode field.
@@ -83,6 +86,7 @@ impl Profile {
             config_hash_unverified: true,
             security_version_optional: true,
             allow_root_mode_debug: true,
+            allow_root_varied_auth_hash_size: true,
             ..Self::default()
         }
     }
