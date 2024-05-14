@@ -1,6 +1,8 @@
 use crate::cbor::field_value::FieldValue;
-use crate::rkp::DeviceInfo;
-use anyhow::{bail, Context, Result};
+use crate::rkp::{
+    DeviceInfo, DeviceInfoBootloaderState, DeviceInfoSecurityLevel, DeviceInfoVbState,
+};
+use anyhow::{bail, ensure, Context, Result};
 use ciborium::value::Value;
 
 impl DeviceInfo {
@@ -62,7 +64,7 @@ impl DeviceInfo {
             None => None,
         };
 
-        Ok(DeviceInfo {
+        let info = DeviceInfo {
             brand: brand.into_string()?,
             manufacturer: manufacturer.into_string()?,
             product: product.into_string()?,
@@ -78,16 +80,45 @@ impl DeviceInfo {
             security_level,
             fused: fused.into_bool()?,
             version: version.try_into()?,
-        })
+        };
+        info.validate_avf_fields()?;
+        Ok(info)
+    }
+
+    fn validate_avf_fields(&self) -> Result<()> {
+        if Some(DeviceInfoSecurityLevel::Avf) == self.security_level {
+            ensure!(
+                self.bootloader_state == DeviceInfoBootloaderState::Avf
+                    && self.vb_state == DeviceInfoVbState::Avf
+                    && self.brand == "aosp-avf"
+                    && self.device == "avf"
+                    && self.model == "avf"
+                    && self.manufacturer == "aosp-avf"
+                    && self.product == "avf",
+                "AVF security level requires AVF fields. Got: {:?}",
+                self
+            );
+        } else {
+            ensure!(
+                self.bootloader_state != DeviceInfoBootloaderState::Avf
+                    && self.vb_state != DeviceInfoVbState::Avf
+                    && self.brand != "aosp-avf"
+                    && self.device != "avf"
+                    && self.model != "avf"
+                    && self.manufacturer != "aosp-avf"
+                    && self.product != "avf",
+                "Non-AVF security level requires non-AVF fields. Got: {:?}",
+                self
+            );
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rkp::{
-        DeviceInfoBootloaderState, DeviceInfoSecurityLevel, DeviceInfoVbState, DeviceInfoVersion,
-    };
+    use crate::rkp::DeviceInfoVersion;
 
     #[test]
     fn device_info_from_cbor_values_optional_os_version() {
@@ -193,6 +224,59 @@ mod tests {
         assert!(err.to_string().contains("may be set only once"));
     }
 
+    #[test]
+    fn device_info_from_cbor_values_non_avf_security_level_has_avf_vb_state() {
+        let mut values = get_valid_values_filtered(|x| x != "vb_state");
+        values.push(("vb_state".into(), "avf".into()));
+
+        let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
+        assert!(err.to_string().contains("Non-AVF security level"), "{err:?}");
+    }
+
+    #[test]
+    fn device_info_from_cbor_values_non_avf_security_level_has_avf_bootloader_state() {
+        let mut values = get_valid_values_filtered(|x| x != "bootloader_state");
+        values.push(("bootloader_state".into(), "avf".into()));
+
+        let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
+        assert!(err.to_string().contains("Non-AVF security level"), "{err:?}");
+    }
+
+    #[test]
+    fn device_info_from_cbor_values_avf_security_level_has_non_avf_vb_state() {
+        let values: Vec<(Value, Value)> = get_valid_avf_values()
+            .into_iter()
+            .filter(|(k, _v)| k.as_text().unwrap() != "vb_state")
+            .chain(vec![("vb_state".into(), "green".into())])
+            .collect();
+        let err = DeviceInfo::from_cbor_values(values, Some(3)).unwrap_err();
+        assert!(err.to_string().contains("AVF security level requires AVF fields"), "{err:?}");
+    }
+
+    #[test]
+    fn device_info_from_cbor_values_avf_security_level_has_avf_fields() {
+        let values = get_valid_avf_values();
+        let actual = DeviceInfo::from_cbor_values(values, Some(3)).unwrap();
+        let expected = DeviceInfo {
+            brand: "aosp-avf".to_string(),
+            manufacturer: "aosp-avf".to_string(),
+            product: "avf".to_string(),
+            model: "avf".to_string(),
+            device: "avf".to_string(),
+            vb_state: DeviceInfoVbState::Avf,
+            bootloader_state: DeviceInfoBootloaderState::Avf,
+            vbmeta_digest: b"abcdefg".to_vec(),
+            os_version: Some("dessert".to_string()),
+            system_patch_level: 303010,
+            boot_patch_level: 30300102,
+            vendor_patch_level: 30300304,
+            security_level: Some(DeviceInfoSecurityLevel::Avf),
+            fused: true,
+            version: DeviceInfoVersion::V3,
+        };
+        assert_eq!(expected, actual);
+    }
+
     fn get_valid_values() -> Vec<(Value, Value)> {
         vec![
             ("brand".into(), "generic".into()),
@@ -210,6 +294,25 @@ mod tests {
             ("security_level".into(), "tee".into()),
             ("fused".into(), 1.into()),
             ("version".into(), 2.into()),
+        ]
+    }
+
+    fn get_valid_avf_values() -> Vec<(Value, Value)> {
+        vec![
+            ("brand".into(), "aosp-avf".into()),
+            ("manufacturer".into(), "aosp-avf".into()),
+            ("product".into(), "avf".into()),
+            ("model".into(), "avf".into()),
+            ("device".into(), "avf".into()),
+            ("vb_state".into(), "avf".into()),
+            ("bootloader_state".into(), "avf".into()),
+            ("vbmeta_digest".into(), b"abcdefg".as_ref().into()),
+            ("os_version".into(), "dessert".into()),
+            ("system_patch_level".into(), 303010.into()),
+            ("boot_patch_level".into(), 30300102.into()),
+            ("vendor_patch_level".into(), 30300304.into()),
+            ("security_level".into(), "avf".into()),
+            ("fused".into(), 1.into()),
         ]
     }
 
