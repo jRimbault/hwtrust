@@ -22,9 +22,9 @@ pub struct DeviceInfo {
     /// the same underlying device.
     pub device: String,
     /// Verified boot state.
-    pub vb_state: Option<DeviceInfoVbState>,
+    pub vb_state: DeviceInfoVbState,
     /// Whether the bootloader is locked or not.
-    pub bootloader_state: Option<DeviceInfoBootloaderState>,
+    pub bootloader_state: DeviceInfoBootloaderState,
     /// Digest of the verified boot metadata structures.
     pub vbmeta_digest: Vec<u8>,
     /// Partner-defined operating system version.
@@ -45,9 +45,6 @@ impl fmt::Debug for DeviceInfo {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let security_level: &dyn fmt::Debug = self.security_level.as_ref().map_or(&"<none>", |s| s);
         let os_version: &dyn fmt::Debug = self.os_version.as_ref().map_or(&"<none>", |v| v);
-        let bootloader_state: &dyn fmt::Debug =
-            self.bootloader_state.as_ref().map_or(&"<none>", |v| v);
-        let vb_state: &dyn fmt::Debug = self.vb_state.as_ref().map_or(&"<none>", |v| v);
 
         fmt.debug_struct("DeviceInfo")
             .field("version", &self.version)
@@ -56,8 +53,8 @@ impl fmt::Debug for DeviceInfo {
             .field("product", &self.product)
             .field("model", &self.model)
             .field("device", &self.device)
-            .field("vb_state", vb_state)
-            .field("bootloader_state", bootloader_state)
+            .field("vb_state", &self.vb_state)
+            .field("bootloader_state", &self.bootloader_state)
             .field("vbmeta_digest", &hex::encode(&self.vbmeta_digest))
             .field("os_version", os_version)
             .field("system_patch_level", &self.system_patch_level)
@@ -76,6 +73,8 @@ pub enum DeviceInfoBootloaderState {
     Locked,
     /// The bootloader will load arbitrary images.
     Unlocked,
+    /// This field is a placeholder for the AVF backend.
+    Avf,
 }
 
 impl TryFrom<&str> for DeviceInfoBootloaderState {
@@ -85,6 +84,7 @@ impl TryFrom<&str> for DeviceInfoBootloaderState {
         match s.to_ascii_lowercase().as_str() {
             "locked" => Ok(Self::Locked),
             "unlocked" => Ok(Self::Unlocked),
+            "avf" => Ok(Self::Avf),
             _ => Err(anyhow!("Invalid bootloader state: `{s}`")),
         }
     }
@@ -99,6 +99,8 @@ pub enum DeviceInfoVbState {
     Yellow,
     /// The bootloader is unlocked, and no guarantees of image integrity are available.
     Orange,
+    /// This field is a placeholder for the AVF backend.
+    Avf,
 }
 
 impl TryFrom<&str> for DeviceInfoVbState {
@@ -109,6 +111,7 @@ impl TryFrom<&str> for DeviceInfoVbState {
             "green" => Ok(Self::Green),
             "yellow" => Ok(Self::Yellow),
             "orange" => Ok(Self::Orange),
+            "avf" => Ok(Self::Avf),
             _ => Err(anyhow!("Invalid VB state: `{s}`")),
         }
     }
@@ -142,6 +145,8 @@ pub enum DeviceInfoSecurityLevel {
     Tee,
     /// KeyMint's backend runs in a Secure Element.
     StrongBox,
+    /// AVF's backend.
+    Avf,
 }
 
 impl TryFrom<&str> for DeviceInfoSecurityLevel {
@@ -151,6 +156,7 @@ impl TryFrom<&str> for DeviceInfoSecurityLevel {
         match s.to_ascii_lowercase().as_str() {
             "strongbox" => Ok(Self::StrongBox),
             "tee" => Ok(Self::Tee),
+            "avf" => Ok(Self::Avf),
             _ => Err(anyhow!("Invalid security level: `{s}`")),
         }
     }
