@@ -70,18 +70,35 @@ impl Payload {
         session: &Session,
         bytes: &[u8],
         config_format: ConfigFormat,
+        is_root: bool,
     ) -> Result<Self> {
         let entries = cbor_map_from_slice(bytes)?;
         let profile_version = PayloadFields::extract_profile_version(session, &entries)?;
-        Self::from_entries(&profile_version.into(), entries, config_format)
+        Self::from_entries(
+            &profile_version.into(),
+            entries,
+            config_format,
+            is_root,
+            session.options.allow_any_mode,
+        )
     }
 
     fn from_entries(
         profile: &Profile,
         entries: Vec<(Value, Value)>,
         config_format: ConfigFormat,
+        is_root: bool,
+        allow_any_mode: bool,
     ) -> Result<Self> {
-        let f = PayloadFields::from_entries(profile, entries, config_format)?;
+        let possibly_degenerate = false;
+        let f = PayloadFields::from_entries(
+            profile,
+            entries,
+            config_format,
+            is_root,
+            possibly_degenerate,
+            allow_any_mode,
+        )?;
         PayloadBuilder::with_subject_public_key(f.subject_public_key)
             .issuer(f.issuer)
             .subject(f.subject)
@@ -115,10 +132,19 @@ impl PayloadFields {
         session: &Session,
         bytes: &[u8],
         config_format: ConfigFormat,
+        is_root: bool,
+        possibly_degenerate: bool,
     ) -> Result<Self> {
         let entries = cbor_map_from_slice(bytes)?;
         let profile_version = Self::extract_profile_version(session, &entries)?;
-        Self::from_entries(&profile_version.into(), entries, config_format)
+        Self::from_entries(
+            &profile_version.into(),
+            entries,
+            config_format,
+            is_root,
+            possibly_degenerate,
+            session.options.allow_any_mode,
+        )
     }
 
     fn extract_profile_version(
@@ -156,6 +182,9 @@ impl PayloadFields {
         profile: &Profile,
         entries: Vec<(Value, Value)>,
         config_format: ConfigFormat,
+        is_root: bool,
+        possibly_degenerate: bool,
+        allow_any_mode: bool,
     ) -> Result<Self> {
         let mut issuer = FieldValue::new("issuer");
         let mut subject = FieldValue::new("subject");
@@ -204,7 +233,7 @@ impl PayloadFields {
             issuer: issuer.into_string()?,
             subject: subject.into_string()?,
             subject_public_key: validate_subject_public_key(profile, subject_public_key)?,
-            mode: validate_mode(profile, mode)?,
+            mode: validate_mode(profile, mode, is_root, possibly_degenerate, allow_any_mode)?,
             code_desc: code_desc.into_optional_bytes()?,
             code_hash,
             config_desc,
@@ -288,8 +317,14 @@ fn validate_subject_public_key(
         .context("parsing subject public key from COSE_key")
 }
 
-fn validate_mode(profile: &Profile, mode: FieldValue) -> Result<Option<DiceMode>> {
-    Ok(if !mode.is_bytes() && profile.mode_type == ModeType::IntOrBytes {
+fn validate_mode(
+    profile: &Profile,
+    mode: FieldValue,
+    is_root: bool,
+    possibly_degenerate: bool,
+    allow_any_mode: bool,
+) -> Result<Option<DiceMode>> {
+    if !mode.is_bytes() && profile.mode_type == ModeType::IntOrBytes {
         mode.into_optional_i64()?
     } else {
         mode.into_optional_bytes()?
@@ -301,12 +336,26 @@ fn validate_mode(profile: &Profile, mode: FieldValue) -> Result<Option<DiceMode>
             })
             .transpose()?
     }
-    .map(|mode| match mode {
-        1 => DiceMode::Normal,
-        2 => DiceMode::Debug,
-        3 => DiceMode::Recovery,
-        _ => DiceMode::NotConfigured,
-    }))
+    .map(|mode| {
+        let mode = match mode {
+            1 => DiceMode::Normal,
+            2 => DiceMode::Debug,
+            3 => DiceMode::Recovery,
+            _ => DiceMode::NotConfigured,
+        };
+
+        if !possibly_degenerate && mode != DiceMode::Normal && !allow_any_mode {
+            let debug_allowed = is_root && profile.allow_root_mode_debug;
+            ensure!(debug_allowed, "Expected mode to be normal, actual mode: {:?}", mode);
+            ensure!(
+                mode == DiceMode::Debug,
+                "Expected mode to be normal or debug, actual mode: {:?}",
+                mode
+            );
+        }
+        Ok(mode)
+    })
+    .transpose()
 }
 
 fn validate_config(
@@ -429,6 +478,10 @@ mod tests {
     use coset::CborSerializable;
     use std::collections::HashMap;
 
+    const ALLOW_ANY_MODE: bool = true;
+    const IS_ROOT: bool = true;
+    const POSSIBLY_DEGENERATE: bool = true;
+
     impl Entry {
         pub(in super::super) fn from_payload(payload: &Payload) -> Result<Self> {
             Ok(Self { payload: serialize(payload.to_cbor_value()?) })
@@ -514,7 +567,8 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         fields.insert(AUTHORITY_HASH, Value::Bytes(vec![2; 32]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap();
     }
 
     #[test]
@@ -527,14 +581,16 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         fields.insert(AUTHORITY_HASH, Value::Bytes(vec![2; 48]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap();
     }
 
     #[test]
     fn valid_payload_sha512() {
         let fields = valid_payload_fields();
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap();
     }
 
     #[test]
@@ -542,7 +598,8 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x20]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap();
     }
 
     #[test]
@@ -550,7 +607,8 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x20, 0x30, 0x40]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
@@ -558,7 +616,8 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x10]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
@@ -566,7 +625,8 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x21]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
@@ -659,10 +719,31 @@ mod tests {
     fn mode_not_configured() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![0]));
-        let session = Session { options: Options::default() };
+        let mut session = Session { options: Options::default() };
+        let serialized_fields = serialize_fields(fields);
+        Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
+        session.set_allow_any_mode(true);
         let payload =
-            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+            Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+                .unwrap();
         assert_eq!(payload.mode(), DiceMode::NotConfigured);
+    }
+
+    #[test]
+    fn mode_not_configured_degenerate() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![0]));
+        let session = Session { options: Options::default() };
+        let payload = PayloadFields::from_cbor(
+            &session,
+            &serialize_fields(fields),
+            ConfigFormat::Android,
+            !IS_ROOT,
+            POSSIBLY_DEGENERATE,
+        )
+        .unwrap();
+        assert_eq!(payload.mode.unwrap(), DiceMode::NotConfigured);
     }
 
     #[test]
@@ -670,38 +751,110 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![1]));
         let session = Session { options: Options::default() };
-        let payload =
-            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        let payload = Payload::from_cbor(
+            &session,
+            &serialize_fields(fields),
+            ConfigFormat::Android,
+            !IS_ROOT,
+        )
+        .unwrap();
         assert_eq!(payload.mode(), DiceMode::Normal);
+    }
+
+    #[test]
+    fn mode_normal_root() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![1]));
+        let session = Session { options: Options::default() };
+        let payload =
+            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, IS_ROOT)
+                .unwrap();
+        assert_eq!(payload.mode(), DiceMode::Normal);
+    }
+
+    #[test]
+    fn mode_normal_root_debug_unexcepted() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![1]));
+        let entries = encode_fields(fields);
+        let profile = Profile { allow_root_mode_debug: false, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap();
     }
 
     #[test]
     fn mode_debug() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![2]));
+        let mut session = Session { options: Options::default() };
+        let serialized_fields = serialize_fields(fields);
+        Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
+        session.set_allow_any_mode(true);
+        let payload =
+            Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+                .unwrap();
+        assert_eq!(payload.mode(), DiceMode::Debug);
+    }
+
+    #[test]
+    fn mode_debug_root() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![2]));
         let session = Session { options: Options::default() };
         let payload =
-            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, IS_ROOT)
+                .unwrap();
         assert_eq!(payload.mode(), DiceMode::Debug);
+    }
+
+    #[test]
+    fn mode_debug_root_debug_unexcepted() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![2]));
+        let entries = encode_fields(fields);
+        let profile = Profile { allow_root_mode_debug: false, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap_err();
     }
 
     #[test]
     fn mode_recovery() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![3]));
-        let session = Session { options: Options::default() };
+        let mut session = Session { options: Options::default() };
+        let serialized_fields = serialize_fields(fields);
+        Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
+        session.set_allow_any_mode(true);
         let payload =
-            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+            Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+                .unwrap();
         assert_eq!(payload.mode(), DiceMode::Recovery);
+    }
+
+    #[test]
+    fn mode_recovery_root() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![3]));
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
     fn mode_invalid_becomes_not_configured() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![4]));
-        let session = Session { options: Options::default() };
-        let payload =
-            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        let mut session = Session { options: Options::default() };
+        session.set_allow_any_mode(true);
+        let payload = Payload::from_cbor(
+            &session,
+            &serialize_fields(fields),
+            ConfigFormat::Android,
+            !IS_ROOT,
+        )
+        .unwrap();
         assert_eq!(payload.mode(), DiceMode::NotConfigured);
     }
 
@@ -710,7 +863,8 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![0, 1]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
@@ -718,10 +872,23 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::from(2));
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
-            .unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries.clone(),
+            ConfigFormat::Android,
+            !IS_ROOT,
+            ALLOW_ANY_MODE,
+        )
+        .unwrap_err();
         let profile = Profile { mode_type: ModeType::IntOrBytes, ..Profile::default() };
-        let payload = Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
+        let payload = Payload::from_entries(
+            &profile,
+            entries,
+            ConfigFormat::Android,
+            !IS_ROOT,
+            ALLOW_ANY_MODE,
+        )
+        .unwrap();
         assert_eq!(payload.mode(), DiceMode::Debug);
     }
 
@@ -730,7 +897,8 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(SUBJECT_PUBLIC_KEY, Value::Bytes(vec![17; 64]));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
@@ -739,7 +907,7 @@ mod tests {
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x20, 0x00, 0x00]));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap();
     }
 
     #[test]
@@ -748,7 +916,7 @@ mod tests {
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x20, 0xbe, 0xef]));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap_err();
     }
 
     #[test]
@@ -756,10 +924,17 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0x20]));
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
-            .unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries.clone(),
+            ConfigFormat::Android,
+            false,
+            false,
+        )
+        .unwrap_err();
         let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
-        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, !IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap();
     }
 
     #[test]
@@ -767,10 +942,17 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0xfe, 0x20]));
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
-            .unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries.clone(),
+            ConfigFormat::Android,
+            false,
+            false,
+        )
+        .unwrap_err();
         let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
-        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap_err();
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, !IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap_err();
     }
 
     #[test]
@@ -778,10 +960,17 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x00, 0x10]));
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
-            .unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries.clone(),
+            ConfigFormat::Android,
+            false,
+            false,
+        )
+        .unwrap_err();
         let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
-        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap_err();
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, !IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap_err();
     }
 
     #[test]
@@ -789,10 +978,17 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.insert(KEY_USAGE, Value::Bytes(vec![]));
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
-            .unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries.clone(),
+            ConfigFormat::Android,
+            false,
+            false,
+        )
+        .unwrap_err();
         let profile = Profile { allow_big_endian_key_usage: true, ..Profile::default() };
-        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap_err();
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, !IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap_err();
     }
 
     #[test]
@@ -803,7 +999,8 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap();
     }
 
     #[test]
@@ -814,7 +1011,8 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
@@ -825,7 +1023,8 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
@@ -836,7 +1035,8 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
+            .unwrap();
     }
 
     #[test]
@@ -847,8 +1047,13 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let session = Session { options: Options::default() };
-        let payload =
-            Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap();
+        let payload = Payload::from_cbor(
+            &session,
+            &serialize_fields(fields),
+            ConfigFormat::Android,
+            !IS_ROOT,
+        )
+        .unwrap();
         let extensions = payload.config_desc().extensions();
         let extensions = HashMap::<_, _>::from_iter(extensions.to_owned());
         assert_eq!(extensions.get("-71000").unwrap(), "Text(\"custom hi\")");
@@ -862,8 +1067,9 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(vec![0xcd; 64]));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::AndroidOrIgnored).unwrap();
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android, false).unwrap_err();
+        let payload =
+            Payload::from_cbor(&session, &cbor, ConfigFormat::AndroidOrIgnored, !IS_ROOT).unwrap();
         assert_eq!(payload.config_desc(), &ConfigDesc::default());
     }
 
@@ -879,9 +1085,22 @@ mod tests {
         let entries = encode_fields(fields);
         let profile =
             Profile { component_version_type: ComponentVersionType::Int, ..Profile::default() };
-        Payload::from_entries(&profile, entries.clone(), ConfigFormat::Android).unwrap_err();
-        let payload =
-            Payload::from_entries(&Profile::default(), entries, ConfigFormat::Android).unwrap();
+        Payload::from_entries(
+            &profile,
+            entries.clone(),
+            ConfigFormat::Android,
+            !IS_ROOT,
+            !ALLOW_ANY_MODE,
+        )
+        .unwrap_err();
+        let payload = Payload::from_entries(
+            &Profile::default(),
+            entries,
+            ConfigFormat::Android,
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             payload.config_desc().component_version(),
             Some(&ComponentVersion::String("It's version 4".to_string()))
@@ -897,7 +1116,7 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap();
         assert_eq!(payload.config_desc().security_version(), Some(0x12345678));
     }
 
@@ -909,10 +1128,23 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
-            .unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries.clone(),
+            ConfigFormat::Android,
+            false,
+            false,
+        )
+        .unwrap_err();
         let profile = Profile { security_version_optional: true, ..Profile::default() };
-        let payload = Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
+        let payload = Payload::from_entries(
+            &profile,
+            entries,
+            ConfigFormat::Android,
+            !IS_ROOT,
+            !ALLOW_ANY_MODE,
+        )
+        .unwrap();
         assert_eq!(payload.config_desc().security_version(), None);
     }
 
@@ -929,7 +1161,7 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap();
         assert_eq!(payload.config_desc().security_version(), Some(0xcafe));
     }
 
@@ -940,7 +1172,7 @@ mod tests {
         fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap_err();
+        Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap_err();
     }
 
     #[test]
@@ -952,7 +1184,7 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap();
         assert!(payload.config_desc().resettable());
     }
 
@@ -965,7 +1197,7 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap();
         assert!(payload.config_desc().rkp_vm_marker());
     }
 
@@ -978,7 +1210,7 @@ mod tests {
         fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
         let cbor = serialize_fields(fields);
         let session = Session { options: Options::default() };
-        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android).unwrap();
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap();
         assert!(!payload.config_desc().resettable());
         assert!(!payload.config_desc().rkp_vm_marker());
     }
@@ -988,7 +1220,14 @@ mod tests {
         let mut fields = valid_payload_fields();
         fields.remove(&CONFIG_HASH);
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries, ConfigFormat::Android).unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries,
+            ConfigFormat::Android,
+            !IS_ROOT,
+            !ALLOW_ANY_MODE,
+        )
+        .unwrap_err();
     }
 
     #[test]
@@ -1004,10 +1243,17 @@ mod tests {
         .unwrap();
         fields.insert(SUBJECT_PUBLIC_KEY, Value::Bytes(serialize(subject_public_key)));
         let entries = encode_fields(fields);
-        Payload::from_entries(&Profile::default(), entries.clone(), ConfigFormat::Android)
-            .unwrap_err();
+        Payload::from_entries(
+            &Profile::default(),
+            entries.clone(),
+            ConfigFormat::Android,
+            false,
+            false,
+        )
+        .unwrap_err();
         let profile = Profile { key_ops_type: KeyOpsType::IntOrArray, ..Profile::default() };
-        Payload::from_entries(&profile, entries, ConfigFormat::Android).unwrap();
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, !IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap();
     }
 
     #[test]
@@ -1024,6 +1270,7 @@ mod tests {
             let session = Session {
                 options: Options {
                     dice_profile_range: DiceProfileRange::new(expected_version, expected_version),
+                    ..Default::default()
                 },
             };
             let profile_version =
@@ -1040,6 +1287,7 @@ mod tests {
                     ProfileVersion::Android13,
                     ProfileVersion::Android16,
                 ),
+                ..Default::default()
             },
         };
         let mut fields = valid_payload_fields();
@@ -1056,6 +1304,7 @@ mod tests {
                     ProfileVersion::Android13,
                     ProfileVersion::Android16,
                 ),
+                ..Default::default()
             },
         };
         let mut fields = valid_payload_fields();
@@ -1073,6 +1322,7 @@ mod tests {
                     ProfileVersion::Android15,
                     ProfileVersion::Android15,
                 ),
+                ..Default::default()
             },
         };
         let mut fields = valid_payload_fields();
@@ -1094,6 +1344,7 @@ mod tests {
                         expected_version,
                         ProfileVersion::Android16,
                     ),
+                    ..Default::default()
                 },
             };
             let profile_version =
@@ -1112,6 +1363,7 @@ mod tests {
                         min_version,
                         ProfileVersion::Android16,
                     ),
+                    ..Default::default()
                 },
             };
             PayloadFields::extract_profile_version(&session, &entries).unwrap_err();
@@ -1134,7 +1386,7 @@ mod tests {
             (CONFIG_DESC, Value::Bytes(config_desc)),
             (CONFIG_HASH, Value::Bytes(config_hash)),
             (AUTHORITY_HASH, Value::Bytes(vec![2; 64])),
-            (MODE, Value::Bytes(vec![0])),
+            (MODE, Value::Bytes(vec![1])),
         ])
     }
 
