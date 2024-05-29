@@ -81,11 +81,18 @@ impl DeviceInfo {
             fused: fused.into_bool()?,
             version: version.try_into()?,
         };
-        info.validate_avf_fields()?;
+        info.validate()?;
         Ok(info)
     }
 
-    fn validate_avf_fields(&self) -> Result<()> {
+    fn validate(&self) -> Result<()> {
+        ensure!(!self.vbmeta_digest.is_empty(), "vbmeta_digest must not be empty");
+        ensure!(
+            !self.vbmeta_digest.iter().all(|b| *b == 0u8),
+            "vbmeta_digest must not be all zeros. Got {:?}",
+            self.vbmeta_digest
+        );
+
         if Some(DeviceInfoSecurityLevel::Avf) == self.security_level {
             ensure!(
                 self.bootloader_state == DeviceInfoBootloaderState::Avf
@@ -222,6 +229,26 @@ mod tests {
         let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
         println!("{err:?}");
         assert!(err.to_string().contains("may be set only once"));
+    }
+
+    #[test]
+    fn device_info_from_cbor_empty_vbmeta_digest() {
+        let mut values: Vec<(Value, Value)> = get_valid_values_filtered(|v| v != "vbmeta_digest");
+        values.push(("vbmeta_digest".into(), vec![0u8; 0].into()));
+
+        let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
+        println!("{err:?}");
+        assert!(err.to_string().contains("vbmeta_digest must not be empty"), "{err:?}");
+    }
+
+    #[test]
+    fn device_info_from_cbor_all_zero_vbmeta_digest() {
+        let mut values: Vec<(Value, Value)> = get_valid_values_filtered(|v| v != "vbmeta_digest");
+        values.push(("vbmeta_digest".into(), vec![0u8; 16].into()));
+
+        let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
+        println!("{err:?}");
+        assert!(err.to_string().contains("vbmeta_digest must not be all zeros"), "{err:?}");
     }
 
     #[test]
