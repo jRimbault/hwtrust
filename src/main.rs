@@ -3,6 +3,7 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use hwtrust::dice;
+use hwtrust::dice::ChainForm;
 use hwtrust::rkp;
 use hwtrust::session::{Options, Session};
 use std::io::BufRead;
@@ -106,7 +107,7 @@ fn session_from_vsr(vsr: Option<VsrVersion>) -> Session {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    match &args.action {
+    let message = match &args.action {
         Action::VerifyDiceChain(sub_args) => {
             println!();
             println!("  ********************************************************************");
@@ -118,21 +119,28 @@ fn main() -> Result<()> {
         Action::DiceChain(sub_args) => verify_dice_chain(&args, sub_args)?,
         Action::FactoryCsr(sub_args) => parse_factory_csr(&args, sub_args)?,
         Action::Csr(sub_args) => parse_csr(&args, sub_args)?,
-    }
-    println!("Success!");
+    };
+    println!("{}", message.unwrap_or(String::from("Success")));
     Ok(())
 }
 
-fn verify_dice_chain(args: &Args, sub_args: &DiceChainArgs) -> Result<()> {
+fn verify_dice_chain(args: &Args, sub_args: &DiceChainArgs) -> Result<Option<String>> {
     let session = session_from_vsr(args.vsr);
-    let chain = dice::Chain::from_cbor(&session, &fs::read(&sub_args.chain)?)?;
+    let chain = dice::ChainForm::from_cbor(&session, &fs::read(&sub_args.chain)?)?;
     if args.verbose {
-        print!("{}", chain);
+        println!("{chain:#?}");
     }
-    Ok(())
+    if let ChainForm::Degenerate(_) = chain {
+        return Ok(Some(String::from(
+            "WARNING!
+The given 'degenerate' DICE chain is valid. However, the degenerate chain form is deprecated in
+favor of full DICE chains, rooted in ROM, that measure the system's boot components.",
+        )));
+    }
+    Ok(None)
 }
 
-fn parse_factory_csr(args: &Args, sub_args: &FactoryCsrArgs) -> Result<()> {
+fn parse_factory_csr(args: &Args, sub_args: &FactoryCsrArgs) -> Result<Option<String>> {
     let session = session_from_vsr(args.vsr);
     let input = &fs::File::open(&sub_args.csr_file)?;
     let mut csr_count = 0;
@@ -150,17 +158,17 @@ fn parse_factory_csr(args: &Args, sub_args: &FactoryCsrArgs) -> Result<()> {
     if csr_count == 0 {
         bail!("No CSRs found in the input file '{}'", sub_args.csr_file);
     }
-    Ok(())
+    Ok(None)
 }
 
-fn parse_csr(args: &Args, sub_args: &CsrArgs) -> Result<()> {
+fn parse_csr(args: &Args, sub_args: &CsrArgs) -> Result<Option<String>> {
     let session = session_from_vsr(args.vsr);
     let input = &fs::File::open(&sub_args.csr_file)?;
     let csr = rkp::Csr::from_cbor(&session, input)?;
     if args.verbose {
         print!("{csr:#?}");
     }
-    Ok(())
+    Ok(None)
 }
 
 #[cfg(test)]
