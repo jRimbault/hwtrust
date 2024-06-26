@@ -29,8 +29,16 @@ impl ChainForm {
             let value = it.as_slice()[0].clone();
             let entry = Entry::verify_cbor_value(value, &root_public_key)
                 .context("parsing degenerate entry")?;
-            let fields = PayloadFields::from_cbor(session, entry.payload(), ConfigFormat::Android)
-                .context("parsing degenerate payload")?;
+            let is_root = true;
+            let possibly_degenerate = true;
+            let fields = PayloadFields::from_cbor(
+                session,
+                entry.payload(),
+                ConfigFormat::Android,
+                is_root,
+                possibly_degenerate,
+            )
+            .context("parsing degenerate payload")?;
             let chain =
                 DegenerateChain::new(fields.issuer, fields.subject, fields.subject_public_key)
                     .context("creating DegenerateChain")?;
@@ -73,7 +81,8 @@ impl Chain {
         for (n, value) in values.enumerate() {
             let entry = Entry::verify_cbor_value(value, previous_public_key)
                 .with_context(|| format!("Invalid entry at index {}", n))?;
-            let config_format = if n == 0
+            let is_root = n == 0;
+            let config_format = if is_root
                 && session.options.dice_profile_range.contains(ProfileVersion::Android14)
             {
                 // Context: b/261647022
@@ -81,7 +90,7 @@ impl Chain {
             } else {
                 ConfigFormat::default()
             };
-            let payload = Payload::from_cbor(session, entry.payload(), config_format)
+            let payload = Payload::from_cbor(session, entry.payload(), config_format, is_root)
                 .with_context(|| format!("Invalid payload at index {}", n))?;
             payloads.push(payload);
             let previous = payloads.last().unwrap();
@@ -128,7 +137,7 @@ mod tests {
     #[test]
     fn chain_form_valid_proper() {
         let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let session = Session { options: Options { allow_any_mode: true, ..Default::default() } };
         let form = ChainForm::from_cbor(&session, &chain).unwrap();
         assert!(matches!(form, ChainForm::Proper(_)));
     }
@@ -144,7 +153,7 @@ mod tests {
     #[test]
     fn check_chain_valid_ed25519() {
         let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let session = Session { options: Options { allow_any_mode: true, ..Default::default() } };
         let chain = Chain::from_cbor(&session, &chain).unwrap();
         assert_eq!(chain.payloads().len(), 8);
     }
@@ -153,7 +162,7 @@ mod tests {
     fn check_chain_valid_ed25519_value() {
         let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
         let chain = value_from_bytes(&chain).unwrap();
-        let session = Session { options: Options::default() };
+        let session = Session { options: Options { allow_any_mode: true, ..Default::default() } };
         let chain = Chain::from_value(&session, chain).unwrap();
         assert_eq!(chain.payloads().len(), 8);
     }
