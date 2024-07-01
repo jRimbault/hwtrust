@@ -197,64 +197,19 @@ impl PayloadFields {
         let (config_desc, config_hash) =
             validate_config(profile, config_desc, config_hash, config_format).context("config")?;
 
-        let (code_hash, authority_hash) =
-            validate_hash_sizes(profile, code_hash, &config_hash, authority_hash, is_root)?;
-
         Ok(Self {
             issuer: issuer.into_string()?,
             subject: subject.into_string()?,
             subject_public_key: validate_subject_public_key(profile, subject_public_key)?,
             mode: validate_mode(profile, mode)?,
             code_desc: code_desc.into_optional_bytes()?,
-            code_hash,
+            code_hash: code_hash.into_optional_bytes()?,
             config_desc,
             config_hash,
             authority_desc: authority_desc.into_optional_bytes()?,
-            authority_hash,
+            authority_hash: authority_hash.into_optional_bytes()?,
         })
     }
-}
-
-fn validate_hash_sizes(
-    profile: &Profile,
-    code_hash: FieldValue,
-    config_hash: &Option<Vec<u8>>,
-    authority_hash: FieldValue,
-    is_root: bool,
-) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-    let code_hash = code_hash.into_optional_bytes()?;
-    let authority_hash: Option<Vec<u8>> = authority_hash.into_optional_bytes()?;
-
-    if let Some(ref code_hash) = code_hash {
-        let used_hash_size = code_hash.len();
-
-        if ![32, 48, 64].contains(&(used_hash_size)) {
-            bail!("bad code hash size, actual: {0}, expected: 32, 48, or 64", used_hash_size)
-        }
-
-        if let Some(ref config_hash) = config_hash {
-            if config_hash.len() != used_hash_size {
-                bail!(
-                    "bad config hash size, actual: {0}, expected: {1}",
-                    config_hash.len(),
-                    used_hash_size
-                )
-            }
-        }
-
-        if let Some(ref authority_hash) = authority_hash {
-            let root_exception = profile.allow_root_varied_auth_hash_size && is_root;
-            if authority_hash.len() != used_hash_size && !root_exception {
-                bail!(
-                    "bad authority hash size, actual: {0}, expected: {1}",
-                    authority_hash.len(),
-                    used_hash_size
-                )
-            }
-        }
-    }
-
-    Ok((code_hash, authority_hash))
 }
 
 fn validate_key_usage(profile: &Profile, key_usage: FieldValue) -> Result<()> {
@@ -567,92 +522,6 @@ mod tests {
         fields.insert(KEY_USAGE, Value::Bytes(vec![0x21]));
         let session = Session { options: Options::default() };
         Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android).unwrap_err();
-    }
-
-    #[test]
-    fn bad_code_hash_size() {
-        let mut fields = valid_payload_fields();
-        fields.insert(CODE_HASH, Value::Bytes(vec![1; 16]));
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
-            .unwrap_err();
-    }
-
-    #[test]
-    fn bad_authority_hash_size() {
-        let mut fields = valid_payload_fields();
-        fields.insert(AUTHORITY_HASH, Value::Bytes(vec![1; 16]));
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
-            .unwrap_err();
-    }
-
-    #[test]
-    fn inconsistent_authority_hash_size() {
-        let mut fields = valid_payload_fields();
-        fields.insert(AUTHORITY_HASH, Value::Bytes(vec![1; 32]));
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
-            .unwrap_err();
-    }
-
-    #[test]
-    fn inconsistent_root_authority_hash_size() {
-        let mut fields = valid_payload_fields();
-        fields.insert(AUTHORITY_HASH, Value::Bytes(vec![1; 20]));
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, IS_ROOT)
-            .unwrap();
-    }
-
-    #[test]
-    fn inconsistent_root_authority_hash_size_auth_differ_unexcepted() {
-        let mut fields = valid_payload_fields();
-        fields.insert(AUTHORITY_HASH, Value::Bytes(vec![1; 20]));
-        let entries = encode_fields(fields);
-        let profile = Profile { allow_root_varied_auth_hash_size: false, ..Profile::default() };
-        Payload::from_entries(&profile, entries, ConfigFormat::Android, IS_ROOT, !ALLOW_ANY_MODE)
-            .unwrap_err();
-    }
-
-    #[test]
-    fn bad_config_hash_size() {
-        let mut fields = valid_payload_fields();
-        fields.insert(CONFIG_HASH, Value::Bytes(vec![1; 16]));
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
-            .unwrap_err();
-    }
-
-    #[test]
-    fn inconsistent_config_hash_size() {
-        let mut fields = valid_payload_fields();
-        fields.insert(CODE_HASH, Value::Bytes(vec![1; 32]));
-        fields.insert(AUTHORITY_HASH, Value::Bytes(vec![1; 32]));
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, !IS_ROOT)
-            .unwrap_err();
-    }
-
-    #[test]
-    fn inconsistent_root_config_hash_size() {
-        let mut fields = valid_payload_fields();
-        fields.insert(CODE_HASH, Value::Bytes(vec![1; 32]));
-        fields.insert(AUTHORITY_HASH, Value::Bytes(vec![1; 32]));
-        let session = Session { options: Options::default() };
-        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, IS_ROOT)
-            .unwrap_err();
-    }
-
-    #[test]
-    fn inconsistent_root_config_hash_size_auth_differ_unexcepted() {
-        let mut fields = valid_payload_fields();
-        fields.insert(CODE_HASH, Value::Bytes(vec![1; 32]));
-        fields.insert(AUTHORITY_HASH, Value::Bytes(vec![1; 32]));
-        let entries = encode_fields(fields);
-        let profile = Profile { allow_root_varied_auth_hash_size: false, ..Profile::default() };
-        Payload::from_entries(&profile, entries, ConfigFormat::Android, IS_ROOT, !ALLOW_ANY_MODE)
-            .unwrap_err();
     }
 
     #[test]
