@@ -47,9 +47,6 @@ enum Action {
 struct DiceChainArgs {
     /// Path to a file containing a DICE chain
     chain: String,
-    /// Allow non-normal modes
-    #[clap(long)]
-    allow_any_mode: bool,
 }
 
 #[derive(Parser)]
@@ -128,8 +125,7 @@ fn main() -> Result<()> {
 }
 
 fn verify_dice_chain(args: &Args, sub_args: &DiceChainArgs) -> Result<Option<String>> {
-    let mut session = session_from_vsr(args.vsr);
-    session.set_allow_any_mode(sub_args.allow_any_mode);
+    let session = session_from_vsr(args.vsr);
     let chain = dice::ChainForm::from_cbor(&session, &fs::read(&sub_args.chain)?)?;
     if args.verbose {
         println!("{chain:#?}");
