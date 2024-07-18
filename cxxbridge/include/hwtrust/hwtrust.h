@@ -19,7 +19,7 @@ public:
     kVsr16,
   };
 
-  static android::base::Result<DiceChain> Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind) noexcept;
+  static android::base::Result<DiceChain> Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind, bool allow_any_mode) noexcept;
 
   ~DiceChain();
   DiceChain(DiceChain&&) = default;

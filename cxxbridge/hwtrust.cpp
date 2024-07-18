@@ -16,7 +16,7 @@ DiceChain::~DiceChain() {}
 DiceChain::DiceChain(std::unique_ptr<BoxedDiceChain> chain, size_t size) noexcept
       : chain_(std::move(chain)), size_(size) {}
 
-Result<DiceChain> DiceChain::Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind) noexcept {
+Result<DiceChain> DiceChain::Verify(const std::vector<uint8_t>& chain, DiceChain::Kind kind, bool allow_any_mode) noexcept {
   rust::DiceChainKind chainKind;
   switch (kind) {
     case DiceChain::Kind::kVsr13:
@@ -32,7 +32,7 @@ Result<DiceChain> DiceChain::Verify(const std::vector<uint8_t>& chain, DiceChain
       chainKind = rust::DiceChainKind::Vsr16;
       break;
   }
-  auto res = rust::VerifyDiceChain({chain.data(), chain.size()}, chainKind);
+  auto res = rust::VerifyDiceChain({chain.data(), chain.size()}, chainKind, allow_any_mode);
   if (!res.error.empty()) {
       return Error() << static_cast<std::string>(res.error);
   }
