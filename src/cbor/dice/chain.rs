@@ -29,8 +29,9 @@ impl ChainForm {
             let value = it.as_slice()[0].clone();
             let entry = Entry::verify_cbor_value(value, &root_public_key)
                 .context("parsing degenerate entry")?;
-            let fields = PayloadFields::from_cbor(session, entry.payload(), ConfigFormat::Android)
-                .context("parsing degenerate payload")?;
+            let fields =
+                PayloadFields::from_cbor(session, entry.payload(), ConfigFormat::AndroidOrIgnored)
+                    .context("parsing degenerate payload")?;
             let chain =
                 DegenerateChain::new(fields.issuer, fields.subject, fields.subject_public_key)
                     .context("creating DegenerateChain")?;
