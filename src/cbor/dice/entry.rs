@@ -310,9 +310,6 @@ fn validate_mode(
     is_root: bool,
     allow_any_mode: bool,
 ) -> Result<Option<DiceMode>> {
-    // TODO(b/318483637): remove allow_any_mode override to enable mode enforcement
-    let allow_any_mode = true;
-
     if !mode.is_bytes() && profile.mode_type == ModeType::IntOrBytes {
         mode.into_optional_i64()?
     } else {
@@ -710,6 +707,8 @@ mod tests {
         fields.insert(MODE, Value::Bytes(vec![0]));
         let mut session = Session { options: Options::default() };
         let serialized_fields = serialize_fields(fields);
+        Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
         session.set_allow_any_mode(true);
         let payload =
             Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
@@ -775,6 +774,8 @@ mod tests {
         fields.insert(MODE, Value::Bytes(vec![2]));
         let mut session = Session { options: Options::default() };
         let serialized_fields = serialize_fields(fields);
+        Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
         session.set_allow_any_mode(true);
         let payload =
             Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
@@ -794,16 +795,37 @@ mod tests {
     }
 
     #[test]
+    fn mode_debug_root_debug_unexcepted() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![2]));
+        let entries = encode_fields(fields);
+        let profile = Profile { allow_root_mode_debug: false, ..Profile::default() };
+        Payload::from_entries(&profile, entries, ConfigFormat::Android, IS_ROOT, !ALLOW_ANY_MODE)
+            .unwrap_err();
+    }
+
+    #[test]
     fn mode_recovery() {
         let mut fields = valid_payload_fields();
         fields.insert(MODE, Value::Bytes(vec![3]));
         let mut session = Session { options: Options::default() };
         let serialized_fields = serialize_fields(fields);
+        Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
+            .unwrap_err();
         session.set_allow_any_mode(true);
         let payload =
             Payload::from_cbor(&session, &serialized_fields, ConfigFormat::Android, !IS_ROOT)
                 .unwrap();
         assert_eq!(payload.mode(), DiceMode::Recovery);
+    }
+
+    #[test]
+    fn mode_recovery_root() {
+        let mut fields = valid_payload_fields();
+        fields.insert(MODE, Value::Bytes(vec![3]));
+        let session = Session { options: Options::default() };
+        Payload::from_cbor(&session, &serialize_fields(fields), ConfigFormat::Android, IS_ROOT)
+            .unwrap_err();
     }
 
     #[test]
