@@ -36,7 +36,11 @@ mod ffi {
         type DiceChain;
 
         #[cxx_name = VerifyDiceChain]
-        fn verify_dice_chain(chain: &[u8], kind: DiceChainKind) -> VerifyDiceChainResult;
+        fn verify_dice_chain(
+            chain: &[u8],
+            kind: DiceChainKind,
+            allow_any_mode: bool,
+        ) -> VerifyDiceChainResult;
 
         #[cxx_name = GetDiceChainPublicKey]
         fn get_dice_chain_public_key(chain: &DiceChain, n: usize) -> Vec<u8>;
@@ -49,8 +53,12 @@ mod ffi {
 /// A DICE chain as exposed over the cxx bridge.
 pub struct DiceChain(Option<ChainForm>);
 
-fn verify_dice_chain(chain: &[u8], kind: ffi::DiceChainKind) -> ffi::VerifyDiceChainResult {
-    let session = Session {
+fn verify_dice_chain(
+    chain: &[u8],
+    kind: ffi::DiceChainKind,
+    allow_any_mode: bool,
+) -> ffi::VerifyDiceChainResult {
+    let mut session = Session {
         options: match kind {
             ffi::DiceChainKind::Vsr13 => Options::vsr13(),
             ffi::DiceChainKind::Vsr14 => Options::vsr14(),
@@ -65,6 +73,7 @@ fn verify_dice_chain(chain: &[u8], kind: ffi::DiceChainKind) -> ffi::VerifyDiceC
             }
         },
     };
+    session.set_allow_any_mode(allow_any_mode);
     match ChainForm::from_cbor(&session, chain) {
         Ok(chain) => {
             let len = match chain {
