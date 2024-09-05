@@ -5,6 +5,7 @@ use coset::CborSerializable;
 use hwtrust::dice::ChainForm;
 use hwtrust::session::{Options, Session};
 
+#[allow(clippy::needless_maybe_sized)]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[cxx::bridge(namespace = "hwtrust::rust")]
 mod ffi {
