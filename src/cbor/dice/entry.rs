@@ -35,6 +35,7 @@ const COMPONENT_VERSION: i64 = -70003;
 const RESETTABLE: i64 = -70004;
 const SECURITY_VERSION: i64 = -70005;
 const RKP_VM_MARKER: i64 = -70006;
+const COMPONENT_INSTANCE_NAME: i64 = -70007;
 
 pub(super) struct Entry {
     payload: Vec<u8>,
@@ -385,6 +386,7 @@ fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc>
     let entries = cbor_map_from_slice(bytes)?;
 
     let mut component_name = FieldValue::new("component name");
+    let mut component_instance_name = FieldValue::new("component instance name");
     let mut component_version = FieldValue::new("component version");
     let mut resettable = FieldValue::new("resettable");
     let mut security_version = FieldValue::new("security version");
@@ -395,6 +397,7 @@ fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc>
         if let Some(Ok(key)) = key.as_integer().map(TryInto::try_into) {
             let field = match key {
                 COMPONENT_NAME => &mut component_name,
+                COMPONENT_INSTANCE_NAME => &mut component_instance_name,
                 COMPONENT_VERSION => &mut component_version,
                 RESETTABLE => &mut resettable,
                 SECURITY_VERSION => &mut security_version,
@@ -430,6 +433,9 @@ fn config_desc_from_slice(profile: &Profile, bytes: &[u8]) -> Result<ConfigDesc>
 
     Ok(ConfigDescBuilder::new()
         .component_name(component_name.into_optional_string().context("Component name")?)
+        .component_instance_name(
+            component_instance_name.into_optional_string().context("Component instance name")?,
+        )
         .component_version(
             validate_version(profile, component_version).context("Component version")?,
         )
@@ -1057,6 +1063,19 @@ mod tests {
         let payload =
             Payload::from_cbor(&session, &cbor, ConfigFormat::AndroidOrIgnored, !IS_ROOT).unwrap();
         assert_eq!(payload.config_desc(), &ConfigDesc::default());
+    }
+
+    #[test]
+    fn config_desc_component_instance_name() {
+        let mut fields = valid_payload_fields();
+        let config_desc = serialize(cbor!({COMPONENT_INSTANCE_NAME => "foobar"}).unwrap());
+        let config_hash = sha512(&config_desc).to_vec();
+        fields.insert(CONFIG_DESC, Value::Bytes(config_desc));
+        fields.insert(CONFIG_HASH, Value::Bytes(config_hash));
+        let cbor = serialize_fields(fields);
+        let session = Session { options: Options::default() };
+        let payload = Payload::from_cbor(&session, &cbor, ConfigFormat::Android, !IS_ROOT).unwrap();
+        assert_eq!(payload.config_desc().component_instance_name(), Some("foobar"));
     }
 
     #[test]
