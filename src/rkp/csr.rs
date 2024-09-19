@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{dice::Chain, rkp::DeviceInfo};
+use crate::{dice::ChainForm, rkp::DeviceInfo};
 
 use super::ProtectedData;
 
@@ -25,7 +25,7 @@ pub enum Csr {
         /// Describes the device that is requesting certificates.
         device_info: DeviceInfo,
         /// The DICE chain for the device
-        dice_chain: Chain,
+        dice_chain: ChainForm,
     },
 }
 

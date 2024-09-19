@@ -1,6 +1,6 @@
 use crate::cbor::field_value::FieldValue;
 use crate::cbor::value_from_bytes;
-use crate::dice::Chain;
+use crate::dice::ChainForm;
 use crate::rkp::{Csr, DeviceInfo, ProtectedData};
 use crate::session::Session;
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -92,7 +92,7 @@ impl Csr {
         let signed_data =
             FieldValue::from_optional_value("SignedData", csr.pop()).into_cose_sign1()?;
         let dice_chain =
-            Chain::from_value(session, csr.pop().ok_or(anyhow!("Missing DiceCertChain"))?)?;
+            ChainForm::from_value(session, csr.pop().ok_or(anyhow!("Missing DiceCertChain"))?)?;
 
         let signed_data_payload = signed_data.payload.context("missing payload in SignedData")?;
         let csr_payload_value = value_from_bytes(&signed_data_payload)
@@ -129,6 +129,7 @@ mod tests {
     use crate::cbor::rkp::csr::testutil::{parse_pem_public_key_or_panic, test_device_info};
     use crate::dice::{ChainForm, DegenerateChain, DiceMode};
     use crate::rkp::DeviceInfoVersion;
+    use crate::session::{Options, Session};
     use std::fs;
 
     #[test]
@@ -162,26 +163,39 @@ mod tests {
                 MCowBQYDK2VwAyEA3FEn/nhqoGOKNok1AJaLfTKI+aFXHf4TfC42vUyPU6s=\n\
                 -----END PUBLIC KEY-----\n",
             );
-            assert_eq!(dice_chain.root_public_key(), &root_public_key);
-            let payloads = dice_chain.payloads();
-            assert_eq!(payloads.len(), 1);
-            assert_eq!(payloads[0].issuer(), "issuer");
-            assert_eq!(payloads[0].subject(), "subject");
-            assert_eq!(payloads[0].mode(), DiceMode::Normal);
-            assert_eq!(payloads[0].code_hash(), &[0x55; 32]);
-            let expected_config_hash: &[u8] =
-                b"\xb8\x96\x54\xe2\x2c\xa4\xd2\x4a\x9c\x0e\x45\x11\xc8\xf2\x63\xf0\
-                  \x66\x0d\x2e\x20\x48\x96\x90\x14\xf4\x54\x63\xc4\xf4\x39\x30\x38";
-            assert_eq!(payloads[0].config_hash(), Some(expected_config_hash));
-            assert_eq!(payloads[0].authority_hash(), &[0x55; 32]);
-            assert_eq!(payloads[0].config_desc().component_name(), Some("component_name"));
-            assert_eq!(payloads[0].config_desc().component_version(), None);
-            assert!(!payloads[0].config_desc().resettable());
-            assert_eq!(payloads[0].config_desc().security_version(), None);
-            assert_eq!(payloads[0].config_desc().extensions(), []);
+            match dice_chain {
+                ChainForm::Proper(proper_chain) => {
+                    assert_eq!(proper_chain.root_public_key(), &root_public_key);
+                    let payloads = proper_chain.payloads();
+                    assert_eq!(payloads.len(), 1);
+                    assert_eq!(payloads[0].issuer(), "issuer");
+                    assert_eq!(payloads[0].subject(), "subject");
+                    assert_eq!(payloads[0].mode(), DiceMode::Normal);
+                    assert_eq!(payloads[0].code_hash(), &[0x55; 32]);
+                    let expected_config_hash: &[u8] =
+                        b"\xb8\x96\x54\xe2\x2c\xa4\xd2\x4a\x9c\x0e\x45\x11\xc8\xf2\x63\xf0\
+                          \x66\x0d\x2e\x20\x48\x96\x90\x14\xf4\x54\x63\xc4\xf4\x39\x30\x38";
+                    assert_eq!(payloads[0].config_hash(), Some(expected_config_hash));
+                    assert_eq!(payloads[0].authority_hash(), &[0x55; 32]);
+                    assert_eq!(payloads[0].config_desc().component_name(), Some("component_name"));
+                    assert_eq!(payloads[0].config_desc().component_version(), None);
+                    assert!(!payloads[0].config_desc().resettable());
+                    assert_eq!(payloads[0].config_desc().security_version(), None);
+                    assert_eq!(payloads[0].config_desc().extensions(), []);
+                }
+                ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
+            }
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }
+    }
+
+    #[test]
+    fn from_cbor_valid_v3_with_degenerate_chain() -> anyhow::Result<()> {
+        let cbor = fs::read("testdata/csr/v3_csr_degenerate_chain.cbor")?;
+        let session = Session { options: Options::vsr16() };
+        Csr::from_cbor(&session, cbor.as_slice())?;
+        Ok(())
     }
 
     #[test]

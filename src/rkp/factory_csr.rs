@@ -133,8 +133,13 @@ mod tests {
                 MCowBQYDK2VwAyEA3FEn/nhqoGOKNok1AJaLfTKI+aFXHf4TfC42vUyPU6s=\n\
                 -----END PUBLIC KEY-----\n",
             );
-            assert_eq!(dice_chain.root_public_key(), &root_public_key);
-            assert_eq!(dice_chain.payloads().len(), 1);
+            match dice_chain {
+                ChainForm::Proper(p) => {
+                    assert_eq!(p.root_public_key(), &root_public_key);
+                    assert_eq!(p.payloads().len(), 1);
+                }
+                ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
+            }
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }
@@ -179,8 +184,13 @@ mod tests {
                 zpPPnt2rAOdqL9DSDZcIBbLas5xh9psaEaD0o/0KxlUVZplO/BPmRf3Ycg==\n\
                 -----END PUBLIC KEY-----\n",
             );
-            assert_eq!(dice_chain.root_public_key(), &root_public_key);
-            assert_eq!(dice_chain.payloads().len(), 1);
+            match dice_chain {
+                ChainForm::Proper(p) => {
+                    assert_eq!(p.root_public_key(), &root_public_key);
+                    assert_eq!(p.payloads().len(), 1);
+                }
+                ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
+            }
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }
