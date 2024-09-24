@@ -1,4 +1,6 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
+
+use openssl::x509::X509;
 
 use crate::{dice::ChainForm, rkp::DeviceInfo};
 
@@ -26,6 +28,8 @@ pub enum Csr {
         device_info: DeviceInfo,
         /// The DICE chain for the device
         dice_chain: ChainForm,
+        /// X.509 certificate chain that certifies the dice_chain root key (UDS_pub)
+        uds_certs: HashMap<String, Vec<X509>>,
     },
 }
 
@@ -38,10 +42,11 @@ impl fmt::Debug for Csr {
                 .field("Challenge", &hex::encode(challenge))
                 .field("ProtectedData", &protected_data)
                 .finish(),
-            Csr::V3 { device_info, dice_chain } => fmt
+            Csr::V3 { device_info, dice_chain, uds_certs } => fmt
                 .debug_struct("CSR V3")
                 .field("DeviceInfo", &device_info)
                 .field("DiceChain", &dice_chain)
+                .field("UdsCerts", &uds_certs)
                 .finish(),
         }
     }

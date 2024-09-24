@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::cbor::field_value::FieldValue;
 use crate::cbor::value_from_bytes;
 use crate::dice::ChainForm;
@@ -6,6 +8,10 @@ use crate::session::Session;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use ciborium::value::Value;
+use openssl::pkey::Id;
+use openssl::stack::Stack;
+use openssl::x509::store::X509StoreBuilder;
+use openssl::x509::{X509StoreContext, X509};
 
 const VERSION_OR_DEVICE_INFO_INDEX: usize = 0;
 
@@ -93,6 +99,7 @@ impl Csr {
             FieldValue::from_optional_value("SignedData", csr.pop()).into_cose_sign1()?;
         let dice_chain =
             ChainForm::from_value(session, csr.pop().ok_or(anyhow!("Missing DiceCertChain"))?)?;
+        let uds_certs = FieldValue::from_optional_value("UdsCerts", csr.pop()).into_map()?;
 
         let signed_data_payload = signed_data.payload.context("missing payload in SignedData")?;
         let csr_payload_value = value_from_bytes(&signed_data_payload)
@@ -114,9 +121,101 @@ impl Csr {
         let device_info = FieldValue::from_optional_value("DeviceInfo", csr_payload.pop());
         let _certificate_type =
             FieldValue::from_optional_value("CertificateType", csr_payload.pop());
+        let uds_certs = Self::parse_and_validate_uds_certs(&dice_chain, uds_certs)?;
 
         let device_info = DeviceInfo::from_cbor_values(device_info.into_map()?, Some(3))?;
-        Ok(Self::V3 { device_info, dice_chain })
+        Ok(Self::V3 { device_info, dice_chain, uds_certs })
+    }
+
+    fn parse_and_validate_uds_certs(
+        dice_chain: &ChainForm,
+        uds_certs: Vec<(Value, Value)>,
+    ) -> Result<HashMap<String, Vec<X509>>> {
+        let expected_uds = match dice_chain {
+            ChainForm::Degenerate(chain) => chain.public_key(),
+            ChainForm::Proper(chain) => chain.root_public_key(),
+        }
+        .pkey();
+
+        let mut parsed = HashMap::new();
+        for (signer, der_certs) in uds_certs {
+            let signer = FieldValue::from_value("SignerName", signer).into_string()?;
+            let x509_certs = FieldValue::from_value("UdsCertChain", der_certs)
+                .into_array()?
+                .into_iter()
+                .map(|v| match FieldValue::from_value("X509Certificate", v).into_bytes() {
+                    Ok(b) => X509::from_der(&b).context("Unable to parse DER X509Certificate"),
+                    Err(e) => Err(e).context("Invalid type for X509Certificate"),
+                })
+                .collect::<Result<Vec<X509>>>()?;
+            Self::validate_uds_cert_path(&signer, &x509_certs)?;
+            ensure!(
+                x509_certs.last().unwrap().public_key()?.public_eq(expected_uds),
+                "UdsCert leaf for SignerName '{signer}' does not match the DICE chain root"
+            );
+            ensure!(
+                parsed.insert(signer.clone(), x509_certs).is_none(),
+                "Duplicate signer found: '{signer}'"
+            );
+        }
+        Ok(parsed)
+    }
+
+    fn validate_uds_cert_path(signer: &String, certs: &Vec<X509>) -> Result<()> {
+        ensure!(
+            certs.len() > 1,
+            "Certificate chain for signer '{signer}' is too short: {certs:#?}"
+        );
+
+        for cert in certs {
+            let id = cert.public_key()?.id();
+            ensure!(
+                matches!(id, Id::RSA | Id::EC | Id::ED25519),
+                "Certificate has an unsupported public algorithm id {id:?}"
+            );
+        }
+
+        // OpenSSL wants us to split up root trust anchor, leaf, and intermediates
+        let mut certs_copy = certs.clone();
+        let leaf = certs_copy.pop().unwrap();
+        let mut intermediates = Stack::new()?;
+        while certs_copy.len() > 1 {
+            intermediates.push(certs_copy.pop().unwrap())?;
+        }
+        let root = certs_copy.pop().unwrap();
+
+        let mut root_store_builder = X509StoreBuilder::new()?;
+        root_store_builder.add_cert(root)?;
+        let root_store = root_store_builder.build();
+
+        let mut store = X509StoreContext::new()?;
+        let result = store.init(&root_store, &leaf, &intermediates, |context| {
+            // the with_context function must return Result<T, ErrorStack>, so we have to get
+            // tricky and return Result<Result<()>, ErrorStack> so we can bubble up custom errors.
+            match context.verify_cert() {
+                Ok(true) => (),
+                Ok(false) => return Ok(Err(anyhow!("Cert failed to verify: {}", context.error()))),
+                Err(e) => return Err(e),
+            };
+
+            if let Some(chain) = context.chain() {
+                // OpenSSL returns the leaf at the bottom of the stack.
+                if !chain.iter().rev().eq(certs.iter()) {
+                    let chain: Vec<_> = chain.iter().rev().map(|r| r.to_owned()).collect();
+                    return Ok(Err(anyhow!(
+                        "Verified chain doesn't match input: {chain:#?} vs {certs:#?}"
+                    )));
+                }
+            } else {
+                return Ok(Err(anyhow!("Cert chain is missing (impossible!)")));
+            }
+            Ok(Ok(()))
+        });
+
+        match result {
+            Ok(e) => e,
+            Err(e) => bail!("Error verifying cert chain: {e:?}"),
+        }
     }
 }
 
@@ -156,7 +255,7 @@ mod tests {
     fn from_base64_valid_v3() {
         let input = fs::read_to_string("testdata/csr/v3_csr.base64").unwrap().trim().to_owned();
         let csr = Csr::from_base64_cbor(&Session::default(), &input).unwrap();
-        if let Csr::V3 { device_info, dice_chain } = csr {
+        if let Csr::V3 { device_info, dice_chain, uds_certs } = csr {
             assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
             let root_public_key = parse_pem_public_key_or_panic(
                 "-----BEGIN PUBLIC KEY-----\n\
@@ -185,6 +284,7 @@ mod tests {
                 }
                 ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
             }
+            assert_eq!(uds_certs.len(), 0);
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }

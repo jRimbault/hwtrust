@@ -126,7 +126,7 @@ mod tests {
     fn from_json_valid_v3_ed25519() {
         let json = fs::read_to_string("testdata/factory_csr/v3_ed25519_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        if let Csr::V3 { device_info, dice_chain } = csr.csr {
+        if let Csr::V3 { device_info, dice_chain, uds_certs } = csr.csr {
             assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
             let root_public_key = parse_pem_public_key_or_panic(
                 "-----BEGIN PUBLIC KEY-----\n\
@@ -140,6 +140,7 @@ mod tests {
                 }
                 ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
             }
+            assert_eq!(uds_certs.len(), 0);
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }
@@ -176,7 +177,7 @@ mod tests {
     fn from_json_valid_v3_p256() {
         let json = fs::read_to_string("testdata/factory_csr/v3_p256_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        if let Csr::V3 { device_info, dice_chain } = csr.csr {
+        if let Csr::V3 { device_info, dice_chain, uds_certs } = csr.csr {
             assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
             let root_public_key = parse_pem_public_key_or_panic(
                 "-----BEGIN PUBLIC KEY-----\n\
@@ -191,9 +192,82 @@ mod tests {
                 }
                 ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
             }
+            assert_eq!(uds_certs.len(), 0);
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }
+    }
+
+    fn get_pem_or_die(cert: Option<&X509>) -> String {
+        let cert = cert.unwrap_or_else(|| panic!("Missing x.509 cert"));
+        let pem =
+            cert.to_pem().unwrap_or_else(|e| panic!("Failed to encode X.509 cert to PEM: {e}"));
+        String::from_utf8_lossy(&pem).to_string()
+    }
+
+    #[test]
+    fn from_json_valid_v3_p256_with_uds_certs() {
+        let json =
+            fs::read_to_string("testdata/factory_csr/v3_p256_valid_with_uds_certs.json").unwrap();
+        let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
+        if let Csr::V3 { uds_certs, .. } = csr.csr {
+            assert_eq!(uds_certs.len(), 1);
+            let chain = uds_certs.get("test-signer-name").unwrap_or_else(|| {
+                panic!("Unable to find 'test-signer-name' in UdsCerts: {uds_certs:?}")
+            });
+            assert_eq!(chain.len(), 2);
+            assert_eq!(
+                get_pem_or_die(chain.first()),
+                "-----BEGIN CERTIFICATE-----\n\
+                MIIBaDCCARqgAwIBAgIBezAFBgMrZXAwKzEVMBMGA1UEChMMRmFrZSBDb21wYW55\n\
+                MRIwEAYDVQQDEwlGYWtlIFJvb3QwHhcNMjQwOTI0MjEzMjA0WhcNMjQxMDI0MjEz\n\
+                MjA0WjArMRUwEwYDVQQKEwxGYWtlIENvbXBhbnkxEjAQBgNVBAMTCUZha2UgUm9v\n\
+                dDAqMAUGAytlcAMhAJ45Dz1cqnjfqN0aSC0lNoxvscDhZNJuiw3jgX0vYGZxo2Mw\n\
+                YTAdBgNVHQ4EFgQUFoQKGf30kU6MWRpu4LKF819DoVUwHwYDVR0jBBgwFoAUFoQK\n\
+                Gf30kU6MWRpu4LKF819DoVUwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n\
+                AgQwBQYDK2VwA0EAjj8OH416kWdwqT6rq1SG98MLPzF8c4Lfc/3PvNRjKgzY22bA\n\
+                j3MPBSUKbwggVRpZEj+MTfBVkDIzRp+aJ4nNCQ==\n\
+                -----END CERTIFICATE-----\n"
+            );
+            assert_eq!(
+                get_pem_or_die(chain.get(1)),
+                "-----BEGIN CERTIFICATE-----\n\
+                MIIBmzCCAU2gAwIBAgICAcgwBQYDK2VwMCsxFTATBgNVBAoTDEZha2UgQ29tcGFu\n\
+                eTESMBAGA1UEAxMJRmFrZSBSb290MB4XDTI0MDkyNDIxMzIwNFoXDTI0MTAyNDIx\n\
+                MzIwNFowLjEVMBMGA1UEChMMRmFrZSBDb21wYW55MRUwEwYDVQQDEwxGYWtlIENo\n\
+                aXBzZXQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASqcxR0cvVCzKmVdCN/ZFC6\n\
+                07Ko6fJsFe46B29DSgco0fvvEf/QcHnwqFMuHIhtkvJ8U/QP+Ml5XA6uD3Uz2qru\n\
+                o2MwYTAdBgNVHQ4EFgQU7DeeP69GeSE0Ke52jECFAn28T0UwHwYDVR0jBBgwFoAU\n\
+                FoQKGf30kU6MWRpu4LKF819DoVUwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8E\n\
+                BAMCAgQwBQYDK2VwA0EATmpvyYRpPMp3p0Ie+UVWzsSeoleagn2KEFcFBOyFvNBF\n\
+                YagY0NnJZQ8sPuPJmUODrIif+C0Kr3kZl/w4TQ3cBQ==\n\
+                -----END CERTIFICATE-----\n"
+            );
+        } else {
+            panic!("Parsed CSR was not V3: {:?}", csr);
+        }
+    }
+
+    #[test]
+    fn from_json_v3_p256_with_mismatch_uds_certs() {
+        let json =
+            fs::read_to_string("testdata/factory_csr/v3_p256_mismatched_uds_certs.json").unwrap();
+        let err = FactoryCsr::from_json(&Session::default(), &json).unwrap_err();
+        assert!(
+            err.to_string().contains("does not match the DICE chain root"),
+            "Expected mismatch between UDS_pub and UdsCerts leaf"
+        );
+    }
+
+    #[test]
+    fn from_json_v3_p256_with_extra_uds_cert_in_chain() {
+        let json = fs::read_to_string("testdata/factory_csr/v3_p256_extra_uds_cert_in_chain.json")
+            .unwrap();
+        let err = FactoryCsr::from_json(&Session::default(), &json).unwrap_err();
+        assert!(
+            err.to_string().contains("Verified chain doesn't match input"),
+            "Expected cert validation to fail due to extra cert in UDS chain"
+        );
     }
 
     #[test]

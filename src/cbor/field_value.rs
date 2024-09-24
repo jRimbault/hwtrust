@@ -45,6 +45,10 @@ impl FieldValue {
         Self { name, value: None }
     }
 
+    pub fn from_value(name: &'static str, value: Value) -> Self {
+        Self { name, value: Some(value) }
+    }
+
     pub fn from_optional_value(name: &'static str, value: Option<Value>) -> Self {
         Self { name, value }
     }
