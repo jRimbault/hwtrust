@@ -4,7 +4,7 @@ use crate::cbor::field_value::FieldValue;
 use crate::cbor::value_from_bytes;
 use crate::dice::ChainForm;
 use crate::rkp::{Csr, DeviceInfo, ProtectedData};
-use crate::session::Session;
+use crate::session::{RkpInstance, Session};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use ciborium::value::Value;
@@ -97,8 +97,7 @@ impl Csr {
 
         let signed_data =
             FieldValue::from_optional_value("SignedData", csr.pop()).into_cose_sign1()?;
-        let dice_chain =
-            ChainForm::from_value(session, csr.pop().ok_or(anyhow!("Missing DiceCertChain"))?)?;
+        let raw_dice_chain = csr.pop().ok_or(anyhow!("Missing DiceCertChain"))?;
         let uds_certs = FieldValue::from_optional_value("UdsCerts", csr.pop()).into_map()?;
 
         let signed_data_payload = signed_data.payload.context("missing payload in SignedData")?;
@@ -119,8 +118,18 @@ impl Csr {
 
         let _keys_to_sign = FieldValue::from_optional_value("KeysToSign", csr_payload.pop());
         let device_info = FieldValue::from_optional_value("DeviceInfo", csr_payload.pop());
-        let _certificate_type =
+        let certificate_type =
             FieldValue::from_optional_value("CertificateType", csr_payload.pop());
+
+        const CERTIFICATE_TYPE_RKPVM: &str = "rkp-vm";
+        // TODO(b/373552814): Validate that the certificate type matches the RKP instance in
+        // the session instead of overriding the session.
+        let mut new_session = session.clone();
+        if CERTIFICATE_TYPE_RKPVM == certificate_type.into_string()? {
+            new_session.set_rkp_instance(RkpInstance::Avf);
+        }
+
+        let dice_chain = ChainForm::from_value(&new_session, raw_dice_chain)?;
         let uds_certs = Self::parse_and_validate_uds_certs(&dice_chain, uds_certs)?;
 
         let device_info = DeviceInfo::from_cbor_values(device_info.into_map()?, Some(3))?;
@@ -227,7 +236,7 @@ mod tests {
     use super::*;
     use crate::cbor::rkp::csr::testutil::{parse_pem_public_key_or_panic, test_device_info};
     use crate::dice::{ChainForm, DegenerateChain, DiceMode};
-    use crate::rkp::DeviceInfoVersion;
+    use crate::rkp::{DeviceInfoSecurityLevel, DeviceInfoVersion};
     use crate::session::{Options, Session};
     use std::fs;
 
@@ -295,6 +304,27 @@ mod tests {
         let cbor = fs::read("testdata/csr/v3_csr_degenerate_chain.cbor")?;
         let session = Session { options: Options::vsr16() };
         Csr::from_cbor(&session, cbor.as_slice())?;
+        Ok(())
+    }
+
+    #[test]
+    fn from_cbor_valid_v3_avf_with_rkpvm_chain() -> anyhow::Result<()> {
+        let input = fs::read("testdata/csr/v3_csr_avf.cbor")?;
+        let mut session = Session::default();
+        session.set_allow_any_mode(true);
+        session.set_rkp_instance(RkpInstance::Avf);
+        let csr = Csr::from_cbor(&session, input.as_slice())?;
+        let Csr::V3 { device_info, dice_chain, .. } = csr else {
+            panic!("Parsed CSR was not V3: {:?}", csr);
+        };
+        assert_eq!(device_info.security_level, Some(DeviceInfoSecurityLevel::Avf));
+        let ChainForm::Proper(proper_chain) = dice_chain else {
+            panic!("Parsed chain is not proper: {:?}", dice_chain);
+        };
+        let expected_len = 7;
+        assert_eq!(proper_chain.payloads().len(), expected_len);
+        assert!(proper_chain.payloads()[expected_len - 1].has_rkpvm_marker());
+        assert!(proper_chain.payloads()[expected_len - 2].has_rkpvm_marker());
         Ok(())
     }
 

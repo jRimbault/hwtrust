@@ -96,7 +96,7 @@ impl Chain {
             let previous = payloads.last().unwrap();
             previous_public_key = previous.subject_public_key();
         }
-        Self::validate(root, payloads).context("Building chain")
+        Self::validate(root, payloads, session.options.rkp_instance).context("Building chain")
     }
 }
 

@@ -10,6 +10,7 @@ rust_defaults {
         "libanyhow",
         "libbase64_rust",
         "libciborium",
+        "libclap",
         "libcoset",
         "libhex",
         "libitertools",
@@ -19,6 +20,8 @@ rust_defaults {
     target: {
         host: {
             rlibs: ["libopenssl_static"],
+            // dylib is disabled due to compile failure in libhwtrust. See b/373621186 for details.
+            dylib: { enabled: false, },
         },
         android: {
             rustlibs: ["libopenssl"],

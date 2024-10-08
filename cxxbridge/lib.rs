@@ -3,7 +3,8 @@
 
 use coset::CborSerializable;
 use hwtrust::dice::ChainForm;
-use hwtrust::session::{Options, Session};
+use hwtrust::session::{Options, RkpInstance, Session};
+use std::str::FromStr;
 
 #[allow(clippy::needless_maybe_sized)]
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -41,6 +42,7 @@ mod ffi {
             chain: &[u8],
             kind: DiceChainKind,
             allow_any_mode: bool,
+            instance: &str,
         ) -> VerifyDiceChainResult;
 
         #[cxx_name = GetDiceChainPublicKey]
@@ -58,6 +60,7 @@ fn verify_dice_chain(
     chain: &[u8],
     kind: ffi::DiceChainKind,
     allow_any_mode: bool,
+    instance: &str,
 ) -> ffi::VerifyDiceChainResult {
     let mut session = Session {
         options: match kind {
@@ -74,7 +77,15 @@ fn verify_dice_chain(
             }
         },
     };
+    let Ok(rkp_instance) = RkpInstance::from_str(instance) else {
+        return ffi::VerifyDiceChainResult {
+            error: format!("invalid RKP instance: {}", instance),
+            chain: Box::new(DiceChain(None)),
+            len: 0,
+        };
+    };
     session.set_allow_any_mode(allow_any_mode);
+    session.set_rkp_instance(rkp_instance);
     match ChainForm::from_cbor(&session, chain) {
         Ok(chain) => {
             let len = match chain {

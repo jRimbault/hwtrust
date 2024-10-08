@@ -82,6 +82,11 @@ impl Payload {
     pub fn authority_hash(&self) -> &[u8] {
         &self.authority_hash
     }
+
+    /// Returns whether the payload has an RKP VM marker.
+    pub fn has_rkpvm_marker(&self) -> bool {
+        self.config_desc.rkp_vm_marker()
+    }
 }
 
 impl Display for Payload {

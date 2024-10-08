@@ -1,7 +1,8 @@
 use crate::rkp::Csr;
-use crate::session::Session;
+use crate::session::{RkpInstance, Session};
 use anyhow::{bail, Result};
 use serde_json::{Map, Value};
+use std::str::FromStr;
 
 /// Represents a "Factory CSR", which is a JSON value captured for each device on the factory
 /// line. This JSON is uploaded to the RKP backend to register the device. We reuse the CSR
@@ -38,7 +39,9 @@ impl FactoryCsr {
     fn from_map(session: &Session, fields: Map<String, Value>) -> Result<Self> {
         let base64 = get_string_from_map(&fields, "csr")?;
         let name = get_string_from_map(&fields, "name")?;
-        let csr = Csr::from_base64_cbor(session, &base64)?;
+        let mut new_session = session.clone();
+        new_session.set_rkp_instance(RkpInstance::from_str(&name)?);
+        let csr = Csr::from_base64_cbor(&new_session, &base64)?;
         Ok(Self { csr, name })
     }
 }
@@ -309,5 +312,15 @@ mod tests {
         let json = serde_json::to_string(&value).unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
         assert_eq!(csr.name, "default");
+    }
+
+    #[test]
+    fn from_json_valid_v3_avf_with_rkpvm_markers() {
+        let json = fs::read_to_string("testdata/factory_csr/v3_avf_valid_with_rkpvm_markers.json")
+            .unwrap();
+        let mut session = Session::default();
+        session.set_allow_any_mode(true);
+        let csr = FactoryCsr::from_json(&session, &json).unwrap();
+        assert_eq!(csr.name, "avf");
     }
 }

@@ -1,9 +1,22 @@
 use crate::dice::Payload;
 use crate::publickey::PublicKey;
+use crate::session::RkpInstance;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::fmt::{self, Display, Formatter};
 use thiserror::Error;
+
+/// The minimum number of RKP VM markers required in a valid [RKP VM DICE chain][rkpvm-chain].
+///
+/// An RKP VM chain must have a continuous presence of RKP VM markers, starting from a DICE
+/// certificate derived in the TEE and extending to the leaf DICE certificate.
+/// Therefore, a valid RKP VM chain should have at least two DICE certificates with RKP VM markers:
+///
+/// * One added in the pVM (managed by Android).
+/// * One added in the TEE (managed by vendors).
+///
+/// [rkpvm-chain]: https://android.googlesource.com/platform/packages/modules/Virtualization/+/main/docs/vm_remote_attestation.md
+const RKPVM_CHAIN_MIN_MARKER_NUM: usize = 2;
 
 /// Enumeration of the different forms that a DICE chain can take.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,6 +45,15 @@ pub(crate) enum ValidationError {
     RepeatedSubject(usize, String),
     #[error("repeated key in payload {0}")]
     RepeatedKey(usize),
+    #[error("RKP VM chain has discontinuous marker at the {0}th payload")]
+    RkpVmChainHasDiscontinuousMarker(usize),
+    #[error(
+        "RKP VM chain does not have enough RKP VM markers. \
+         Minimal marker number:{RKPVM_CHAIN_MIN_MARKER_NUM}, actual marker number:{0}"
+    )]
+    NotEnoughRkpVmMarker(usize),
+    #[error("non RKP VM chain should not have continuous RKP VM markers")]
+    UnexpectedRkpVmMarkers,
 }
 
 impl ChainForm {
@@ -48,9 +70,17 @@ impl Chain {
     /// equal to the subject of the previous entry. The chain is not allowed to contain any
     /// repeated subjects or subject public keys as that would suggest something untoward has
     /// happened.
+    ///
+    /// Additionally, `rkp_instance` provides additional context for the validation of the chain
+    /// according to the instance-specific chain validation rules.
+    ///
+    /// * AVF instance: The chain is validated against the RKP VM chain validation rules.
+    /// * Non-AVF instances: The chain must not contain RKP VM markers that conform to the RKP VM
+    ///   chain validation rules.
     pub(crate) fn validate(
         root_public_key: PublicKey,
         payloads: Vec<Payload>,
+        rkp_instance: RkpInstance,
     ) -> Result<Self, ValidationError> {
         if payloads.is_empty() {
             return Err(ValidationError::NoPayloads);
@@ -79,7 +109,10 @@ impl Chain {
             }
             previous_subject = Some(payload.subject());
         }
-
+        match rkp_instance {
+            RkpInstance::Avf => validate_rkpvm_chain(&payloads),
+            _ => validate_non_rkpvm_chain(&payloads),
+        }?;
         Ok(Self { root_public_key, payloads })
     }
 
@@ -98,6 +131,30 @@ impl Chain {
         // There is always at least one payload.
         self.payloads.last().unwrap()
     }
+}
+
+fn validate_rkpvm_chain(payloads: &[Payload]) -> Result<(), ValidationError> {
+    let mut rkpvm_marker_count = 0;
+    for (i, payload) in payloads.iter().enumerate() {
+        if payload.has_rkpvm_marker() {
+            rkpvm_marker_count += 1;
+        } else if rkpvm_marker_count > 0 {
+            return Err(ValidationError::RkpVmChainHasDiscontinuousMarker(i));
+        }
+    }
+    if rkpvm_marker_count < RKPVM_CHAIN_MIN_MARKER_NUM {
+        return Err(ValidationError::NotEnoughRkpVmMarker(rkpvm_marker_count));
+    }
+    Ok(())
+}
+
+/// Validates a DICE chain that is not associated with an RKP VM.
+///
+/// While non-RKP VM DICE chains might contain RKP VM markers in some vendor DICE certificates
+/// (e.g., Microdroid pVM DICE chain), they should not have a continuous presence of markers up to
+/// the last certificate in the chain.
+fn validate_non_rkpvm_chain(payloads: &[Payload]) -> Result<(), ValidationError> {
+    validate_rkpvm_chain(payloads).map_or(Ok(()), |_| Err(ValidationError::UnexpectedRkpVmMarkers))
 }
 
 impl Display for Chain {
@@ -187,7 +244,7 @@ impl Display for DegenerateChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dice::{DiceMode, PayloadBuilder};
+    use crate::dice::{ConfigDescBuilder, DiceMode, PayloadBuilder};
     use crate::publickey::testkeys::{PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM, P384_KEY_PEM};
 
     #[test]
@@ -195,7 +252,7 @@ mod tests {
         let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
         let keys = P256_KEY_PEM[1..4].iter().copied().enumerate();
         let payloads = keys.map(|(n, key)| valid_payload(n, key).build().unwrap()).collect();
-        Chain::validate(root_public_key, payloads).unwrap();
+        Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap();
     }
 
     #[test]
@@ -203,14 +260,14 @@ mod tests {
         let root_public_key = PrivateKey::from_pem(ED25519_KEY_PEM[0]).public_key();
         let keys = [P256_KEY_PEM[0], P384_KEY_PEM[0]].into_iter().enumerate();
         let payloads = keys.map(|(n, key)| valid_payload(n, key).build().unwrap()).collect();
-        Chain::validate(root_public_key, payloads).unwrap();
+        Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap();
     }
 
     #[test]
     fn chain_validate_fails_without_payloads() {
         let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
         let payloads = Vec::new();
-        let err = Chain::validate(root_public_key, payloads).unwrap_err();
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap_err();
         assert_eq!(err, ValidationError::NoPayloads);
     }
 
@@ -219,7 +276,7 @@ mod tests {
         let key = P256_KEY_PEM[0];
         let root_public_key = PrivateKey::from_pem(key).public_key();
         let payloads = vec![valid_payload(0, key).build().unwrap()];
-        let err = Chain::validate(root_public_key, payloads).unwrap_err();
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap_err();
         assert_eq!(err, ValidationError::RepeatedKey(0));
     }
 
@@ -231,7 +288,7 @@ mod tests {
             valid_payload(0, repeated_key).build().unwrap(),
             valid_payload(1, repeated_key).build().unwrap(),
         ];
-        let err = Chain::validate(root_public_key, payloads).unwrap_err();
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap_err();
         assert_eq!(err, ValidationError::RepeatedKey(1));
     }
 
@@ -245,7 +302,7 @@ mod tests {
             valid_payload(1, keys[1]).issuer(repeated).build().unwrap(),
             valid_payload(2, keys[2]).subject(repeated).build().unwrap(),
         ];
-        let err = Chain::validate(root_public_key, payloads).unwrap_err();
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap_err();
         assert_eq!(err, ValidationError::RepeatedSubject(2, repeated.into()));
     }
 
@@ -258,8 +315,93 @@ mod tests {
             valid_payload(0, P256_KEY_PEM[1]).subject(expected).build().unwrap(),
             valid_payload(1, P256_KEY_PEM[2]).issuer(wrong).build().unwrap(),
         ];
-        let err = Chain::validate(root_public_key, payloads).unwrap_err();
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap_err();
         assert_eq!(err, ValidationError::IssuerMismatch(1, wrong.into(), expected.into()));
+    }
+
+    #[test]
+    fn non_rkpvm_chain_validate_with_discontinuous_markers() {
+        let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let config_desc = ConfigDescBuilder::new().rkp_vm_marker(true).build();
+        // This chain resembles a Microdroid pVM DICE chain where vendors add RKP VM markers in
+        // the vendor part of the chain, while pVM does not.
+        let payloads = vec![
+            valid_payload(0, P256_KEY_PEM[1]).build().unwrap(),
+            valid_payload(1, P256_KEY_PEM[2]).config_desc(config_desc.clone()).build().unwrap(),
+            valid_payload(2, P256_KEY_PEM[3]).build().unwrap(),
+        ];
+        Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap();
+    }
+
+    #[test]
+    fn non_rkpvm_chain_validate_fails_with_continuous_markers() {
+        let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let config_desc = ConfigDescBuilder::new().rkp_vm_marker(true).build();
+        let payloads = vec![
+            valid_payload(0, P256_KEY_PEM[1]).build().unwrap(),
+            valid_payload(1, P256_KEY_PEM[2]).config_desc(config_desc.clone()).build().unwrap(),
+            valid_payload(2, P256_KEY_PEM[3]).config_desc(config_desc.clone()).build().unwrap(),
+        ];
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Default).unwrap_err();
+        assert_eq!(err, ValidationError::UnexpectedRkpVmMarkers);
+    }
+
+    #[test]
+    fn rkpvm_chain_validate_with_continuous_markers() {
+        let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let config_desc = ConfigDescBuilder::new().rkp_vm_marker(true).build();
+        let payloads = vec![
+            valid_payload(0, P256_KEY_PEM[1]).build().unwrap(),
+            valid_payload(1, P256_KEY_PEM[2]).config_desc(config_desc.clone()).build().unwrap(),
+            valid_payload(2, P256_KEY_PEM[3]).config_desc(config_desc.clone()).build().unwrap(),
+        ];
+        Chain::validate(root_public_key, payloads, RkpInstance::Avf).unwrap();
+    }
+
+    #[test]
+    fn rkpvm_chain_validate_fails_with_no_marker() {
+        let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let payloads = vec![valid_payload(0, P256_KEY_PEM[1]).build().unwrap()];
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Avf).unwrap_err();
+        assert_eq!(err, ValidationError::NotEnoughRkpVmMarker(0));
+    }
+
+    #[test]
+    fn rkpvm_chain_validate_fails_with_not_enough_markers() {
+        let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let config_desc = ConfigDescBuilder::new().rkp_vm_marker(true).build();
+        let payloads = vec![
+            valid_payload(0, P256_KEY_PEM[1]).build().unwrap(),
+            valid_payload(1, P256_KEY_PEM[2]).config_desc(config_desc).build().unwrap(),
+        ];
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Avf).unwrap_err();
+        assert_eq!(err, ValidationError::NotEnoughRkpVmMarker(1));
+    }
+
+    #[test]
+    fn rkpvm_chain_validate_fails_with_discontinous_markers() {
+        let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let config_desc = ConfigDescBuilder::new().rkp_vm_marker(true).build();
+        let payloads = vec![
+            valid_payload(0, P256_KEY_PEM[1]).config_desc(config_desc.clone()).build().unwrap(),
+            valid_payload(1, P256_KEY_PEM[2]).build().unwrap(),
+            valid_payload(2, P256_KEY_PEM[3]).config_desc(config_desc.clone()).build().unwrap(),
+        ];
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Avf).unwrap_err();
+        assert_eq!(err, ValidationError::RkpVmChainHasDiscontinuousMarker(1));
+    }
+
+    #[test]
+    fn rkpvm_chain_validate_fails_last_payload_has_no_marker() {
+        let root_public_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
+        let config_desc = ConfigDescBuilder::new().rkp_vm_marker(true).build();
+        let payloads = vec![
+            valid_payload(0, P256_KEY_PEM[1]).config_desc(config_desc.clone()).build().unwrap(),
+            valid_payload(1, P256_KEY_PEM[2]).config_desc(config_desc.clone()).build().unwrap(),
+            valid_payload(2, P256_KEY_PEM[3]).build().unwrap(),
+        ];
+        let err = Chain::validate(root_public_key, payloads, RkpInstance::Avf).unwrap_err();
+        assert_eq!(err, ValidationError::RkpVmChainHasDiscontinuousMarker(2));
     }
 
     fn valid_payload(index: usize, pem: &str) -> PayloadBuilder {
