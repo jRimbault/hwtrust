@@ -105,7 +105,7 @@ impl Options {
         Self {
             dice_profile_range: DiceProfileRange::new(
                 ProfileVersion::Android13,
-                ProfileVersion::Android13,
+                ProfileVersion::Android15,
             ),
             ..Default::default()
         }
@@ -116,7 +116,7 @@ impl Options {
         Self {
             dice_profile_range: DiceProfileRange::new(
                 ProfileVersion::Android14,
-                ProfileVersion::Android14,
+                ProfileVersion::Android15,
             ),
             ..Default::default()
         }
