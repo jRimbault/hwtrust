@@ -29,8 +29,9 @@ impl PublicKey {
             "Algorithm mistmatch in protected header"
         );
         sign1.verify_signature(aad, |signature, message| match self.kind() {
-            SignatureKind::Ec(k) => {
-                let der = ec_cose_signature_to_der(k, signature).context("Signature to DER")?;
+            SignatureKind::Ec(_) => {
+                let der =
+                    ec_cose_signature_to_der(self.kind(), signature).context("Signature to DER")?;
                 self.verify(&der, message)
             }
             _ => self.verify(signature, message),
@@ -175,7 +176,7 @@ fn get_label_value_as_bytes(key: &CoseKey, label: Label) -> Result<&[u8]> {
         .map(Vec::as_slice)
 }
 
-fn ec_cose_signature_to_der(kind: EcKind, signature: &[u8]) -> Result<Vec<u8>> {
+fn ec_cose_signature_to_der(kind: SignatureKind, signature: &[u8]) -> Result<Vec<u8>> {
     let coord_len = ec_coord_len(kind);
     ensure!(signature.len() == coord_len * 2, "Unexpected signature length");
     let r = BigNum::from_slice(&signature[..coord_len]).context("Creating BigNum for r")?;
@@ -184,10 +185,13 @@ fn ec_cose_signature_to_der(kind: EcKind, signature: &[u8]) -> Result<Vec<u8>> {
     signature.to_der().context("Failed to DER encode signature")
 }
 
-fn ec_coord_len(kind: EcKind) -> usize {
+fn ec_coord_len(kind: SignatureKind) -> usize {
     match kind {
-        EcKind::P256 => 32,
-        EcKind::P384 => 48,
+        SignatureKind::Ec(kind) => match kind {
+            EcKind::P256 => 32,
+            EcKind::P384 => 48,
+        },
+        SignatureKind::Ed25519 => 32,
     }
 }
 
@@ -203,10 +207,11 @@ fn iana_algorithm(kind: SignatureKind) -> iana::Algorithm {
 mod tests {
     use super::*;
     use crate::publickey::testkeys::{
-        PrivateKey, ED25519_KEY_PEM, P256_KEY_PEM, P256_KEY_WITH_LEADING_ZEROS_PEM,
-        P384_KEY_WITH_LEADING_ZEROS_PEM,
+        PrivateKey, EC2_KEY_WITH_HIGH_BITS_SET_PEM, EC2_KEY_WITH_LEADING_ZEROS_PEM,
+        ED25519_KEY_PEM, ED25519_KEY_WITH_LEADING_ZEROS_PEM, P256_KEY_PEM,
     };
     use coset::{CoseSign1Builder, HeaderBuilder};
+    use std::collections::HashSet;
 
     impl PrivateKey {
         pub(in crate::cbor) fn sign_cose_sign1(&self, payload: Vec<u8>) -> CoseSign1 {
@@ -216,7 +221,7 @@ mod tests {
                 .create_signature(b"", |m| {
                     let signature = self.sign(m).unwrap();
                     match self.kind() {
-                        SignatureKind::Ec(ec) => ec_der_signature_to_cose(ec, &signature),
+                        SignatureKind::Ec(_) => ec_der_signature_to_cose(self.kind(), &signature),
                         _ => signature,
                     }
                 })
@@ -224,27 +229,29 @@ mod tests {
         }
     }
 
-    fn ec_der_signature_to_cose(kind: EcKind, signature: &[u8]) -> Vec<u8> {
-        let coord_len = ec_coord_len(kind).try_into().unwrap();
+    fn ec_der_signature_to_cose(kind: SignatureKind, signature: &[u8]) -> Vec<u8> {
+        let coord_len = ec_coord_len(kind);
         let signature = EcdsaSig::from_der(signature).unwrap();
-        let mut r = signature.r().to_vec_padded(coord_len).unwrap();
-        let mut s = signature.s().to_vec_padded(coord_len).unwrap();
+        let mut r = signature.r().to_vec_padded(coord_len.try_into().unwrap()).unwrap();
+        let mut s = signature.s().to_vec_padded(coord_len.try_into().unwrap()).unwrap();
         r.append(&mut s);
         r
     }
 
-    #[test]
-    fn sign_and_verify_okp() {
-        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]);
+    fn sign_and_verify(pem: &str) {
+        let key = PrivateKey::from_pem(pem);
         let sign1 = key.sign_cose_sign1(b"signed payload".to_vec());
         key.public_key().verify_cose_sign1(&sign1, b"").unwrap();
     }
 
     #[test]
+    fn sign_and_verify_okp() {
+        sign_and_verify(ED25519_KEY_PEM[0])
+    }
+
+    #[test]
     fn sign_and_verify_ec2() {
-        let key = PrivateKey::from_pem(P256_KEY_PEM[0]);
-        let sign1 = key.sign_cose_sign1(b"signed payload".to_vec());
-        key.public_key().verify_cose_sign1(&sign1, b"").unwrap();
+        sign_and_verify(P256_KEY_PEM[0])
     }
 
     #[test]
@@ -312,55 +319,82 @@ mod tests {
         key.public_key().verify_cose_sign1(&sign1, b"").unwrap_err();
     }
 
-    #[test]
-    fn to_and_from_okp_cose_key() {
-        let key = PrivateKey::from_pem(ED25519_KEY_PEM[0]).public_key();
+    fn to_and_from_cose_key(pem: &str) {
+        let key = PrivateKey::from_pem(pem).public_key();
         let value = key.to_cose_key().unwrap();
         let new_key = PublicKey::from_cose_key(&value).unwrap();
         assert!(key.pkey().public_eq(new_key.pkey()));
+    }
+    #[test]
+    fn to_and_from_okp_cose_key() {
+        to_and_from_cose_key(ED25519_KEY_PEM[0]);
     }
 
     #[test]
     fn to_and_from_ec2_cose_key() {
-        let key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
-        let value = key.to_cose_key().unwrap();
-        let new_key = PublicKey::from_cose_key(&value).unwrap();
-        assert!(key.pkey().public_eq(new_key.pkey()));
+        to_and_from_cose_key(P256_KEY_PEM[0]);
     }
 
     #[test]
-    fn from_p256_pkey_with_leading_zeros() {
-        for pem in P256_KEY_WITH_LEADING_ZEROS_PEM {
+    fn from_ed25519_pkey_with_leading_zeros() {
+        for pem in ED25519_KEY_WITH_LEADING_ZEROS_PEM {
             let key = PrivateKey::from_pem(pem).public_key();
             let cose_key = key.to_cose_key().unwrap();
+            let kind = key.kind();
+            assert_eq!(kind, SignatureKind::Ed25519);
+            let expected_size = ec_coord_len(kind);
+            let x =
+                get_label_value_as_bytes(&cose_key, Label::Int(iana::OkpKeyParameter::X.to_i64()))
+                    .unwrap();
+            assert_eq!(x.len(), expected_size, "X coordinate is the wrong size\n{}", pem);
+            assert_eq!(x[0], 0);
+        }
+    }
 
+    fn check_coordinate_lengths_and_first_byte(
+        pems: &[&str],
+        first_byte_check: fn(&[u8], &[u8]) -> bool,
+    ) {
+        let mut curves = HashSet::new();
+        for pem in pems {
+            let key = PrivateKey::from_pem(pem).public_key();
+            let cose_key = key.to_cose_key().unwrap();
+            let kind = key.kind();
+            match kind {
+                SignatureKind::Ec(inner) => {
+                    curves.insert(inner);
+                }
+                SignatureKind::Ed25519 => panic!("signature kind should not be ED25519"),
+            };
+            let expected_size = ec_coord_len(kind);
             let x =
                 get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::X.to_i64()))
                     .unwrap();
-            assert_eq!(x.len(), 32, "X coordinate is the wrong size\n{}", pem);
+            assert_eq!(x.len(), expected_size, "X coordinate is the wrong size\n{}", pem);
 
             let y =
                 get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::Y.to_i64()))
                     .unwrap();
-            assert_eq!(y.len(), 32, "Y coordinate is the wrong size\n{}", pem);
+            assert_eq!(y.len(), expected_size, "Y coordinate is the wrong size\n{}", pem);
+            assert!(first_byte_check(x, y));
         }
+        assert!(curves.contains(&EcKind::P256));
+        assert!(curves.contains(&EcKind::P384));
     }
 
     #[test]
-    fn from_p384_pkey_with_leading_zeros() {
-        for pem in P384_KEY_WITH_LEADING_ZEROS_PEM {
-            let key = PrivateKey::from_pem(pem).public_key();
-            let cose_key = key.to_cose_key().unwrap();
-
-            let x =
-                get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::X.to_i64()))
-                    .unwrap();
-            assert_eq!(x.len(), 48, "X coordinate is the wrong size\n{}", pem);
-
-            let y =
-                get_label_value_as_bytes(&cose_key, Label::Int(iana::Ec2KeyParameter::Y.to_i64()))
-                    .unwrap();
-            assert_eq!(y.len(), 48, "Y coordinate is the wrong size\n{}", pem);
+    fn from_ec2_pkey_with_leading_zeros() {
+        fn check(x: &[u8], y: &[u8]) -> bool {
+            x[0] == 0 || y[0] == 0
         }
+        check_coordinate_lengths_and_first_byte(EC2_KEY_WITH_LEADING_ZEROS_PEM, check)
+    }
+
+    #[test]
+    fn from_ec2_pkey_with_high_bits_set() {
+        fn check(x: &[u8], y: &[u8]) -> bool {
+            (x[0] & 0x80 == 0x80) && (y[0] & 0x80 == 0x80)
+        }
+        check_coordinate_lengths_and_first_byte(EC2_KEY_WITH_HIGH_BITS_SET_PEM, check)
     }
 }
