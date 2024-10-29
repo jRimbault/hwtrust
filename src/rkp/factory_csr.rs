@@ -223,27 +223,27 @@ mod tests {
                 get_pem_or_die(chain.first()),
                 "-----BEGIN CERTIFICATE-----\n\
                 MIIBaDCCARqgAwIBAgIBezAFBgMrZXAwKzEVMBMGA1UEChMMRmFrZSBDb21wYW55\n\
-                MRIwEAYDVQQDEwlGYWtlIFJvb3QwHhcNMjQwOTI0MjEzMjA0WhcNMjQxMDI0MjEz\n\
-                MjA0WjArMRUwEwYDVQQKEwxGYWtlIENvbXBhbnkxEjAQBgNVBAMTCUZha2UgUm9v\n\
-                dDAqMAUGAytlcAMhAJ45Dz1cqnjfqN0aSC0lNoxvscDhZNJuiw3jgX0vYGZxo2Mw\n\
-                YTAdBgNVHQ4EFgQUFoQKGf30kU6MWRpu4LKF819DoVUwHwYDVR0jBBgwFoAUFoQK\n\
-                Gf30kU6MWRpu4LKF819DoVUwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n\
-                AgQwBQYDK2VwA0EAjj8OH416kWdwqT6rq1SG98MLPzF8c4Lfc/3PvNRjKgzY22bA\n\
-                j3MPBSUKbwggVRpZEj+MTfBVkDIzRp+aJ4nNCQ==\n\
+                MRIwEAYDVQQDEwlGYWtlIFJvb3QwHhcNMjQxMDI5MTcyMzUzWhcNNDkxMDIzMTcy\n\
+                MzUzWjArMRUwEwYDVQQKEwxGYWtlIENvbXBhbnkxEjAQBgNVBAMTCUZha2UgUm9v\n\
+                dDAqMAUGAytlcAMhAP8RO2gUf4KpszSCofM+eS9mZ5vsy5Nv1Nb1rOWeixbko2Mw\n\
+                YTAdBgNVHQ4EFgQUDAq0XZYLX/NPsnJb0sSoF7rSYG4wHwYDVR0jBBgwFoAUDAq0\n\
+                XZYLX/NPsnJb0sSoF7rSYG4wDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n\
+                AgQwBQYDK2VwA0EAfTXtKTy8RCPxD0CaPpcHkzWkjwXvUmDILBKUJaDPE/lUxr8I\n\
+                TEr9On/8C+eY7fy4SAdtc7EtLECTlNRUSc4ECQ==\n\
                 -----END CERTIFICATE-----\n"
             );
             assert_eq!(
                 get_pem_or_die(chain.get(1)),
                 "-----BEGIN CERTIFICATE-----\n\
                 MIIBmzCCAU2gAwIBAgICAcgwBQYDK2VwMCsxFTATBgNVBAoTDEZha2UgQ29tcGFu\n\
-                eTESMBAGA1UEAxMJRmFrZSBSb290MB4XDTI0MDkyNDIxMzIwNFoXDTI0MTAyNDIx\n\
-                MzIwNFowLjEVMBMGA1UEChMMRmFrZSBDb21wYW55MRUwEwYDVQQDEwxGYWtlIENo\n\
-                aXBzZXQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASqcxR0cvVCzKmVdCN/ZFC6\n\
-                07Ko6fJsFe46B29DSgco0fvvEf/QcHnwqFMuHIhtkvJ8U/QP+Ml5XA6uD3Uz2qru\n\
-                o2MwYTAdBgNVHQ4EFgQU7DeeP69GeSE0Ke52jECFAn28T0UwHwYDVR0jBBgwFoAU\n\
-                FoQKGf30kU6MWRpu4LKF819DoVUwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8E\n\
-                BAMCAgQwBQYDK2VwA0EATmpvyYRpPMp3p0Ie+UVWzsSeoleagn2KEFcFBOyFvNBF\n\
-                YagY0NnJZQ8sPuPJmUODrIif+C0Kr3kZl/w4TQ3cBQ==\n\
+                eTESMBAGA1UEAxMJRmFrZSBSb290MB4XDTI0MTAyOTE3MjM1M1oXDTQ5MTAyMzE3\n\
+                MjM1M1owLjEVMBMGA1UEChMMRmFrZSBDb21wYW55MRUwEwYDVQQDEwxGYWtlIENo\n\
+                aXBzZXQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQRE36cvLi83QAMZciuRW9J\n\
+                NEh8ZRFHWplE0u4i1riTdBFaclau67j+b4R4J4d23+xxG85tjtxvb8Ll8jOO1RNq\n\
+                o2MwYTAdBgNVHQ4EFgQUUToqIkrD77ArjRBU8Hk4nwsotoEwHwYDVR0jBBgwFoAU\n\
+                DAq0XZYLX/NPsnJb0sSoF7rSYG4wDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8E\n\
+                BAMCAgQwBQYDK2VwA0EA3g/zaq6Ld2Y+Hs+/6RA3Kmm9DgJQtJhbKILX75ujfCCo\n\
+                gl+QTFTWz05O8vjNHVVNtryHbJ0UAeL5aazoBC3gCA==\n\
                 -----END CERTIFICATE-----\n"
             );
         } else {
