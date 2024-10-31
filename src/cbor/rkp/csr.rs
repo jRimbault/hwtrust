@@ -122,14 +122,18 @@ impl Csr {
             FieldValue::from_optional_value("CertificateType", csr_payload.pop());
 
         const CERTIFICATE_TYPE_RKPVM: &str = "rkp-vm";
-        // TODO(b/373552814): Validate that the certificate type matches the RKP instance in
-        // the session instead of overriding the session.
-        let mut new_session = session.clone();
-        if CERTIFICATE_TYPE_RKPVM == certificate_type.into_string()? {
-            new_session.set_rkp_instance(RkpInstance::Avf);
+        match session.options.rkp_instance {
+            RkpInstance::Avf => ensure!(
+                CERTIFICATE_TYPE_RKPVM == certificate_type.into_string()?,
+                "CertificateType must be 'rkp-vm' for AVF"
+            ),
+            _ => ensure!(
+                CERTIFICATE_TYPE_RKPVM != certificate_type.into_string()?,
+                "CertificateType must not be 'rkp-vm' for non-AVF"
+            ),
         }
 
-        let dice_chain = ChainForm::from_value(&new_session, raw_dice_chain)?;
+        let dice_chain = ChainForm::from_value(session, raw_dice_chain)?;
         let uds_certs = Self::parse_and_validate_uds_certs(&dice_chain, uds_certs)?;
 
         let device_info = DeviceInfo::from_cbor_values(device_info.into_map()?, Some(3))?;
