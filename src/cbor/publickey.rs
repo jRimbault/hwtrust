@@ -12,7 +12,8 @@ use openssl::nid::Nid;
 use openssl::pkey::{Id, PKey, Public};
 
 impl PublicKey {
-    pub(super) fn from_cose_key(cose_key: &CoseKey) -> Result<Self> {
+    /// Create a public key from a [`CoseKey`].
+    pub fn from_cose_key(cose_key: &CoseKey) -> Result<Self> {
         if !cose_key.key_ops.is_empty() {
             ensure!(cose_key.key_ops.contains(&KeyOperation::Assigned(iana::KeyOperation::Verify)));
         }
@@ -22,7 +23,7 @@ impl PublicKey {
 
     /// Verifies a COSE_Sign1 signature over its message. This function handles the conversion of
     /// the signature format that is needed for some algorithms.
-    pub(in crate::cbor) fn verify_cose_sign1(&self, sign1: &CoseSign1, aad: &[u8]) -> Result<()> {
+    pub fn verify_cose_sign1(&self, sign1: &CoseSign1, aad: &[u8]) -> Result<()> {
         ensure!(sign1.protected.header.crit.is_empty(), "No critical headers allowed");
         ensure!(
             sign1.protected.header.alg == Some(Algorithm::Assigned(iana_algorithm(self.kind()))),
