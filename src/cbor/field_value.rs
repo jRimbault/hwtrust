@@ -45,6 +45,10 @@ impl FieldValue {
         Self { name, value: None }
     }
 
+    pub fn value(&self) -> Option<Value> {
+        self.value.clone()
+    }
+
     pub fn from_value(name: &'static str, value: Value) -> Self {
         Self { name, value: Some(value) }
     }
