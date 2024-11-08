@@ -33,6 +33,7 @@ rust_library {
     name: "libhwtrust",
     defaults: ["libhwtrust_defaults"],
     crate_name: "hwtrust",
+    product_available: true,
     vendor_available: true,
     apex_available: [
         "//apex_available:platform",
