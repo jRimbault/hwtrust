@@ -3,6 +3,7 @@
 
 use coset::CborSerializable;
 use hwtrust::dice::ChainForm;
+use hwtrust::rkp::Csr as InnerCsr;
 use hwtrust::session::{Options, RkpInstance, Session};
 use std::str::FromStr;
 
@@ -34,6 +35,16 @@ mod ffi {
         len: usize,
     }
 
+    /// The result type used by [`validate_csr()`]. The standard [`Result`] is currently only
+    /// converted to exceptions by `cxxbridge` but we can't use exceptions so need to do something
+    /// custom.
+    struct ValidateCsrResult {
+        /// If non-empty, the description of the verification error that occurred.
+        error: String,
+        /// If [`error`] is empty, a handle to the validated Csr.
+        csr: Box<Csr>,
+    }
+
     extern "Rust" {
         type DiceChain;
 
@@ -50,6 +61,19 @@ mod ffi {
 
         #[cxx_name = IsDiceChainProper]
         fn is_dice_chain_proper(chain: &DiceChain) -> bool;
+
+        type Csr;
+
+        #[cxx_name = validateCsr]
+        fn validate_csr(
+            csr: &[u8],
+            kind: DiceChainKind,
+            allow_any_mode: bool,
+            instance: &str,
+        ) -> ValidateCsrResult;
+
+        #[cxx_name = getDiceChainFromCsr]
+        fn get_dice_chain_from_csr(csr: &Csr) -> VerifyDiceChainResult;
     }
 }
 
@@ -88,10 +112,7 @@ fn verify_dice_chain(
     session.set_rkp_instance(rkp_instance);
     match ChainForm::from_cbor(&session, chain) {
         Ok(chain) => {
-            let len = match chain {
-                ChainForm::Proper(ref chain) => chain.payloads().len(),
-                ChainForm::Degenerate(_) => 1,
-            };
+            let len = chain.length();
             let chain = Box::new(DiceChain(Some(chain)));
             ffi::VerifyDiceChainResult { error: "".to_string(), chain, len }
         }
@@ -125,5 +146,64 @@ fn is_dice_chain_proper(chain: &DiceChain) -> bool {
         }
     } else {
         false
+    }
+}
+
+/// A Csr as exposed over the cxx bridge.
+pub struct Csr(Option<InnerCsr>);
+
+fn validate_csr(
+    csr: &[u8],
+    kind: ffi::DiceChainKind,
+    allow_any_mode: bool,
+    instance: &str,
+) -> ffi::ValidateCsrResult {
+    let mut session = Session {
+        options: match kind {
+            ffi::DiceChainKind::Vsr13 => Options::vsr13(),
+            ffi::DiceChainKind::Vsr14 => Options::vsr14(),
+            ffi::DiceChainKind::Vsr15 => Options::vsr15(),
+            ffi::DiceChainKind::Vsr16 => Options::vsr16(),
+            _ => {
+                return ffi::ValidateCsrResult {
+                    error: "invalid chain kind".to_string(),
+                    csr: Box::new(Csr(None)),
+                }
+            }
+        },
+    };
+    let Ok(rkp_instance) = RkpInstance::from_str(instance) else {
+        return ffi::ValidateCsrResult {
+            error: format!("invalid RKP instance: {}", instance),
+            csr: Box::new(Csr(None)),
+        };
+    };
+    session.set_allow_any_mode(allow_any_mode);
+    session.set_rkp_instance(rkp_instance);
+    match InnerCsr::from_cbor(&session, csr) {
+        Ok(csr) => {
+            let csr = Box::new(Csr(Some(csr)));
+            ffi::ValidateCsrResult { error: "".to_string(), csr }
+        }
+        Err(e) => {
+            let error = format!("{:#}", e);
+            ffi::ValidateCsrResult { error, csr: Box::new(Csr(None)) }
+        }
+    }
+}
+
+fn get_dice_chain_from_csr(csr: &Csr) -> ffi::VerifyDiceChainResult {
+    match csr {
+        Csr(Some(csr)) => {
+            let chain = csr.dice_chain();
+            let len = chain.length();
+            let chain = Box::new(DiceChain(Some(chain)));
+            ffi::VerifyDiceChainResult { error: "".to_string(), chain, len }
+        }
+        _ => ffi::VerifyDiceChainResult {
+            error: "CSR could not be destructured".to_string(),
+            chain: Box::new(DiceChain(None)),
+            len: 0,
+        },
     }
 }

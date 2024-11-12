@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::cbor::field_value::FieldValue;
-use crate::cbor::value_from_bytes;
+use crate::cbor::{serialize, value_from_bytes};
 use crate::dice::ChainForm;
-use crate::rkp::{Csr, DeviceInfo, ProtectedData};
+use crate::rkp::{Csr, CsrPayload, DeviceInfo, ProtectedData};
 use crate::session::{RkpInstance, Session};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -14,6 +14,48 @@ use openssl::x509::store::X509StoreBuilder;
 use openssl::x509::{X509StoreContext, X509};
 
 const VERSION_OR_DEVICE_INFO_INDEX: usize = 0;
+
+impl CsrPayload {
+    fn from_value(value: &Value, session: &Session) -> Result<Self> {
+        let serialized = match value.clone().into_bytes() {
+            Ok(bytes) => bytes,
+            Err(_) => bail!("CsrPayload had no bytes"),
+        };
+
+        let mut csr_payload = match value_from_bytes(serialized.as_slice())? {
+            Value::Array(a) => a,
+            other => bail!("CsrPayload is expected to be an array, found {other:?}"),
+        };
+
+        let keys_to_sign = FieldValue::from_optional_value("KeysToSign", csr_payload.pop());
+        let device_info = FieldValue::from_optional_value("DeviceInfo", csr_payload.pop());
+        let certificate_type =
+            FieldValue::from_optional_value("CertificateType", csr_payload.pop());
+        let version = FieldValue::from_optional_value("Version", csr_payload.pop()).into_u64()?;
+        if version != 3 {
+            bail!("Invalid CSR version. Only '3' is supported");
+        }
+
+        let certificate_type = certificate_type.into_string()?;
+
+        const CERTIFICATE_TYPE_RKPVM: &str = "rkp-vm";
+        match session.options.rkp_instance {
+            RkpInstance::Avf => ensure!(
+                CERTIFICATE_TYPE_RKPVM == certificate_type,
+                "CertificateType must be 'rkp-vm' for AVF"
+            ),
+            _ => ensure!(
+                CERTIFICATE_TYPE_RKPVM != certificate_type,
+                "CertificateType must not be 'rkp-vm' for non-AVF"
+            ),
+        }
+
+        let device_info = DeviceInfo::from_cbor_values(device_info.into_map()?, Some(3))?;
+        let keys_to_sign = serialize(keys_to_sign.value().unwrap());
+
+        Ok(CsrPayload { certificate_type, device_info, keys_to_sign })
+    }
+}
 
 impl Csr {
     /// Parse base64-encoded CBOR data as a Certificate Signing Request.
@@ -100,44 +142,32 @@ impl Csr {
         let raw_dice_chain = csr.pop().ok_or(anyhow!("Missing DiceCertChain"))?;
         let uds_certs = FieldValue::from_optional_value("UdsCerts", csr.pop()).into_map()?;
 
-        let signed_data_payload = signed_data.payload.context("missing payload in SignedData")?;
-        let csr_payload_value = value_from_bytes(&signed_data_payload)
-            .context("SignedData payload is not valid CBOR")?
-            .as_array_mut()
-            .context("SignedData payload is not a CBOR array")?
-            .pop()
-            .context("Missing CsrPayload in SignedData")?;
-        let csr_payload_bytes = csr_payload_value
-            .as_bytes()
-            .context("CsrPayload (in SignedData) is expected to be encoded CBOR")?
-            .as_slice();
-        let mut csr_payload = match value_from_bytes(csr_payload_bytes)? {
-            Value::Array(a) => a,
-            other => bail!("CsrPayload is expected to be an array, found {other:?}"),
-        };
-
-        let _keys_to_sign = FieldValue::from_optional_value("KeysToSign", csr_payload.pop());
-        let device_info = FieldValue::from_optional_value("DeviceInfo", csr_payload.pop());
-        let certificate_type =
-            FieldValue::from_optional_value("CertificateType", csr_payload.pop());
-
-        const CERTIFICATE_TYPE_RKPVM: &str = "rkp-vm";
-        match session.options.rkp_instance {
-            RkpInstance::Avf => ensure!(
-                CERTIFICATE_TYPE_RKPVM == certificate_type.into_string()?,
-                "CertificateType must be 'rkp-vm' for AVF"
-            ),
-            _ => ensure!(
-                CERTIFICATE_TYPE_RKPVM != certificate_type.into_string()?,
-                "CertificateType must not be 'rkp-vm' for non-AVF"
-            ),
-        }
-
         let dice_chain = ChainForm::from_value(session, raw_dice_chain)?;
         let uds_certs = Self::parse_and_validate_uds_certs(&dice_chain, uds_certs)?;
 
-        let device_info = DeviceInfo::from_cbor_values(device_info.into_map()?, Some(3))?;
-        Ok(Self::V3 { device_info, dice_chain, uds_certs })
+        let signing_key = dice_chain.leaf_public_key();
+        signing_key.verify_cose_sign1(&signed_data, &[]).context("verifying SignedData failed")?;
+
+        let signed_data_payload = signed_data.payload.context("missing payload in SignedData")?;
+
+        let mut signed_data_value = value_from_bytes(signed_data_payload.as_slice())
+            .context("SignedData is not valid CBOR")?;
+
+        let signed_data_array =
+            signed_data_value.as_array_mut().context("SignedData is not a CBOR array")?;
+
+        let csr_payload_value =
+            signed_data_array.pop().context("Missing CsrPayload in SignedData")?;
+
+        let csr_payload = CsrPayload::from_value(&csr_payload_value, session)
+            .context("Unable to parse CsrPayload")?;
+
+        let challenge = match signed_data_array.pop().context("missing challenge")?.into_bytes() {
+            Ok(challenge) => challenge,
+            Err(_) => bail!("Challenge is not bytes"),
+        };
+
+        Ok(Self::V3 { dice_chain, uds_certs, challenge, csr_payload })
     }
 
     fn parse_and_validate_uds_certs(
@@ -268,8 +298,8 @@ mod tests {
     fn from_base64_valid_v3() {
         let input = fs::read_to_string("testdata/csr/v3_csr.base64").unwrap().trim().to_owned();
         let csr = Csr::from_base64_cbor(&Session::default(), &input).unwrap();
-        if let Csr::V3 { device_info, dice_chain, uds_certs } = csr {
-            assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
+        if let Csr::V3 { dice_chain, uds_certs, csr_payload, .. } = csr {
+            assert_eq!(csr_payload.device_info, test_device_info(DeviceInfoVersion::V3));
             let root_public_key = parse_pem_public_key_or_panic(
                 "-----BEGIN PUBLIC KEY-----\n\
                 MCowBQYDK2VwAyEA3FEn/nhqoGOKNok1AJaLfTKI+aFXHf4TfC42vUyPU6s=\n\
@@ -318,10 +348,10 @@ mod tests {
         session.set_allow_any_mode(true);
         session.set_rkp_instance(RkpInstance::Avf);
         let csr = Csr::from_cbor(&session, input.as_slice())?;
-        let Csr::V3 { device_info, dice_chain, .. } = csr else {
+        let Csr::V3 { dice_chain, csr_payload, .. } = csr else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         };
-        assert_eq!(device_info.security_level, Some(DeviceInfoSecurityLevel::Avf));
+        assert_eq!(csr_payload.device_info.security_level, Some(DeviceInfoSecurityLevel::Avf));
         let ChainForm::Proper(proper_chain) = dice_chain else {
             panic!("Parsed chain is not proper: {:?}", dice_chain);
         };

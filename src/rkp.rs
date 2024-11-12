@@ -5,7 +5,7 @@ mod device_info;
 mod factory_csr;
 mod protected_data;
 
-pub use csr::Csr;
+pub use csr::{Csr, CsrPayload};
 
 pub use device_info::{
     DeviceInfo, DeviceInfoBootloaderState, DeviceInfoSecurityLevel, DeviceInfoVbState,

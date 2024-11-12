@@ -63,6 +63,14 @@ impl ChainForm {
             Self::Degenerate(degenerate) => degenerate.public_key(),
         }
     }
+
+    /// Return the length of the chain.
+    pub fn length(&self) -> usize {
+        match self {
+            ChainForm::Proper(chain) => chain.payloads.len(),
+            ChainForm::Degenerate(_) => 1,
+        }
+    }
 }
 
 impl Chain {

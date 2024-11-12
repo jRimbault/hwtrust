@@ -21,7 +21,6 @@ fn value_from_bytes(mut bytes: &[u8]) -> Result<Value, CiboriumError> {
     Ok(value)
 }
 
-#[cfg(test)]
 fn serialize(value: Value) -> Vec<u8> {
     let mut data = Vec::new();
     ciborium::ser::into_writer(&value, &mut data).unwrap();
