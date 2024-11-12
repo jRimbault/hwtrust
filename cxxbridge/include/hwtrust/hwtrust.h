@@ -28,7 +28,7 @@ public:
 
   static Result<DiceChain> Verify(
     const std::vector<uint8_t>& chain, DiceChain::Kind kind, bool allow_any_mode,
-    const std::string& instance) noexcept;
+    std::string_view instance) noexcept;
 
   ~DiceChain();
   DiceChain(DiceChain&&) = default;
@@ -49,7 +49,7 @@ struct BoxedCsr;
 class Csr final {
 public:
   static Result<Csr> validate(const std::vector<uint8_t>& csr, DiceChain::Kind kind,
-    bool allowAnyMode, const std::string& instance) noexcept;
+    bool allowAnyMode, std::string_view instance) noexcept;
 
   ~Csr();
   Csr(Csr&&) = default;
@@ -57,7 +57,7 @@ public:
   Result<DiceChain> getDiceChain() const noexcept;
 
   private:
-    Csr(std::unique_ptr<BoxedCsr> csr, DiceChain::Kind kind, const std::string& instance) noexcept;
+    Csr(std::unique_ptr<BoxedCsr> csr, DiceChain::Kind kind, std::string_view instance) noexcept;
 
     std::unique_ptr<BoxedCsr> mCsr;
     const DiceChain::Kind mKind;

@@ -31,10 +31,10 @@ DiceChain::DiceChain(std::unique_ptr<BoxedDiceChain> chain, size_t size) noexcep
 
 Result<DiceChain> DiceChain::Verify(
   const std::vector<uint8_t>& chain, DiceChain::Kind kind, bool allow_any_mode,
-  const std::string& instance) noexcept {
+  std::string_view instance) noexcept {
   rust::DiceChainKind chainKind = convertKind(kind);
   auto res = rust::VerifyDiceChain(
-    {chain.data(), chain.size()}, chainKind, allow_any_mode, instance);
+    {chain.data(), chain.size()}, chainKind, allow_any_mode, instance.data());
   if (!res.error.empty()) {
       return Error() << static_cast<std::string>(res.error);
   }
@@ -66,14 +66,14 @@ struct BoxedCsr {
 // Define with a full definition of BoxedCsr to satisfy unique_ptr.
 Csr::~Csr() {}
 
-Csr::Csr(std::unique_ptr<BoxedCsr> csr, DiceChain::Kind kind, const std::string& instance) noexcept
-    : mCsr(std::move(csr)), mKind(kind), mInstance(instance) {}
+Csr::Csr(std::unique_ptr<BoxedCsr> csr, DiceChain::Kind kind, std::string_view instance) noexcept
+    : mCsr(std::move(csr)), mKind(kind), mInstance(instance.data()) {}
 
 Result<Csr> Csr::validate(const std::vector<uint8_t>& request, DiceChain::Kind kind, bool allowAnyMode,
-    const std::string& instance) noexcept {
+    std::string_view instance) noexcept {
     rust::DiceChainKind chainKind = convertKind(kind);
     auto result = rust::validateCsr(
-        {request.data(), request.size()}, chainKind, allowAnyMode, instance);
+        {request.data(), request.size()}, chainKind, allowAnyMode, instance.data());
     if (!result.error.empty()) {
         return Error() << static_cast<std::string>(result.error);
     }
