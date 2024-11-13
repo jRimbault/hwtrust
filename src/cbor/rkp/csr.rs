@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn from_base64_valid_v2() {
-        let input = fs::read_to_string("testdata/csr/v2_csr.base64")
+        let input = fs::read_to_string("tests/data/csr/v2_csr.base64")
             .unwrap()
             .trim()
             .to_owned();
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn from_base64_valid_v3() {
-        let input = fs::read_to_string("testdata/csr/v3_csr.base64")
+        let input = fs::read_to_string("tests/data/csr/v3_csr.base64")
             .unwrap()
             .trim()
             .to_owned();
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn from_cbor_valid_v3_with_degenerate_chain() -> anyhow::Result<()> {
-        let cbor = fs::read("testdata/csr/v3_csr_degenerate_chain.cbor")?;
+        let cbor = fs::read("tests/data/csr/v3_csr_degenerate_chain.cbor")?;
         let session = Session {
             options: Options::vsr16(),
         };

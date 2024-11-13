@@ -47,7 +47,11 @@ impl ChainForm {
             }
         }
 
-        Ok(Self::Proper(Chain::from_root_and_entries(session, root_public_key, it)?))
+        Ok(Self::Proper(Chain::from_root_and_entries(
+            session,
+            root_public_key,
+            it,
+        )?))
     }
 }
 
@@ -83,7 +87,10 @@ impl Chain {
                 .with_context(|| format!("Invalid entry at index {}", n))?;
             let is_root = n == 0;
             let config_format = if is_root
-                && session.options.dice_profile_range.contains(ProfileVersion::Android14)
+                && session
+                    .options
+                    .dice_profile_range
+                    .contains(ProfileVersion::Android14)
             {
                 // Context: b/261647022
                 ConfigFormat::AndroidOrIgnored
@@ -109,7 +116,11 @@ fn root_and_entries_from_value(
         _ => bail!("Expected an array of at least length 2, found: {:?}", value),
     };
     let mut it = array.into_iter();
-    let key_ops_type = if session.options.dice_profile_range.contains(ProfileVersion::Android13) {
+    let key_ops_type = if session
+        .options
+        .dice_profile_range
+        .contains(ProfileVersion::Android13)
+    {
         // Context: b/262599829#comment65
         KeyOpsType::IntOrArray
     } else {
@@ -136,92 +147,133 @@ mod tests {
 
     #[test]
     fn chain_form_valid_proper() {
-        let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
-        let session = Session { options: Options { allow_any_mode: true, ..Default::default() } };
+        let chain = fs::read("tests/data/dice/valid_ed25519.chain").unwrap();
+        let session = Session {
+            options: Options {
+                allow_any_mode: true,
+                ..Default::default()
+            },
+        };
         let form = ChainForm::from_cbor(&session, &chain).unwrap();
         assert!(matches!(form, ChainForm::Proper(_)));
     }
 
     #[test]
     fn chain_form_valid_degenerate() {
-        let chain = fs::read("testdata/dice/cf_degenerate.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let chain = fs::read("tests/data/dice/cf_degenerate.chain").unwrap();
+        let session = Session {
+            options: Options::default(),
+        };
         let form = ChainForm::from_cbor(&session, &chain).unwrap();
         assert!(matches!(form, ChainForm::Degenerate(_)));
     }
 
     #[test]
     fn check_chain_valid_ed25519() {
-        let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
-        let session = Session { options: Options { allow_any_mode: true, ..Default::default() } };
+        let chain = fs::read("tests/data/dice/valid_ed25519.chain").unwrap();
+        let session = Session {
+            options: Options {
+                allow_any_mode: true,
+                ..Default::default()
+            },
+        };
         let chain = Chain::from_cbor(&session, &chain).unwrap();
         assert_eq!(chain.payloads().len(), 8);
     }
 
     #[test]
     fn check_chain_valid_ed25519_value() {
-        let chain = fs::read("testdata/dice/valid_ed25519.chain").unwrap();
+        let chain = fs::read("tests/data/dice/valid_ed25519.chain").unwrap();
         let chain = value_from_bytes(&chain).unwrap();
-        let session = Session { options: Options { allow_any_mode: true, ..Default::default() } };
+        let session = Session {
+            options: Options {
+                allow_any_mode: true,
+                ..Default::default()
+            },
+        };
         let chain = Chain::from_value(&session, chain).unwrap();
         assert_eq!(chain.payloads().len(), 8);
     }
 
     #[test]
     fn check_chain_valid_p256() {
-        let chain = fs::read("testdata/dice/valid_p256.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let chain = fs::read("tests/data/dice/valid_p256.chain").unwrap();
+        let session = Session {
+            options: Options::default(),
+        };
         let chain = Chain::from_cbor(&session, &chain).unwrap();
         assert_eq!(chain.payloads().len(), 3);
     }
 
     #[test]
     fn check_chain_valid_p256_value() {
-        let chain = fs::read("testdata/dice/valid_p256.chain").unwrap();
+        let chain = fs::read("tests/data/dice/valid_p256.chain").unwrap();
         let chain = value_from_bytes(&chain).unwrap();
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options::default(),
+        };
         let chain = Chain::from_value(&session, chain).unwrap();
         assert_eq!(chain.payloads().len(), 3);
     }
 
     #[test]
     fn check_chain_wrong_value_type() {
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options::default(),
+        };
         Chain::from_value(&session, Value::Float(1.234)).unwrap_err();
     }
 
     #[test]
     fn check_chain_bad_p256() {
-        let chain = fs::read("testdata/dice/bad_p256.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let chain = fs::read("tests/data/dice/bad_p256.chain").unwrap();
+        let session = Session {
+            options: Options::default(),
+        };
         Chain::from_cbor(&session, &chain).unwrap_err();
     }
 
     #[test]
     fn check_chain_bad_pub_key() {
-        let chain = fs::read("testdata/dice/bad_pub_key.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let chain = fs::read("tests/data/dice/bad_pub_key.chain").unwrap();
+        let session = Session {
+            options: Options::default(),
+        };
         Chain::from_cbor(&session, &chain).unwrap_err();
     }
 
     #[test]
     fn check_chain_bad_final_signature() {
-        let chain = fs::read("testdata/dice/bad_final_signature.chain").unwrap();
-        let session = Session { options: Options::default() };
+        let chain = fs::read("tests/data/dice/bad_final_signature.chain").unwrap();
+        let session = Session {
+            options: Options::default(),
+        };
         Chain::from_cbor(&session, &chain).unwrap_err();
     }
 
     #[test]
     fn chain_from_cbor_valid() {
-        let keys: Vec<_> = P256_KEY_PEM[..4].iter().copied().map(PrivateKey::from_pem).collect();
+        let keys: Vec<_> = P256_KEY_PEM[..4]
+            .iter()
+            .copied()
+            .map(PrivateKey::from_pem)
+            .collect();
         let mut pub_keys = keys.iter().map(PrivateKey::public_key);
-        let root_key = pub_keys.next().unwrap().to_cose_key().unwrap().to_cbor_value().unwrap();
+        let root_key = pub_keys
+            .next()
+            .unwrap()
+            .to_cose_key()
+            .unwrap()
+            .to_cbor_value()
+            .unwrap();
         let mut chain = vec![root_key];
         chain.extend(pub_keys.enumerate().map(|(n, key)| {
             let entry = Entry::from_payload(&valid_payload(n, key)).unwrap();
             entry.sign(&keys[n]).to_cbor_value().unwrap()
         }));
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options::default(),
+        };
         Chain::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
     }
 
@@ -230,13 +282,21 @@ mod tests {
         let keys = [ED25519_KEY_PEM[0], P256_KEY_PEM[0], P384_KEY_PEM[0]];
         let keys: Vec<_> = keys.iter().copied().map(PrivateKey::from_pem).collect();
         let mut pub_keys = keys.iter().map(PrivateKey::public_key);
-        let root_key = pub_keys.next().unwrap().to_cose_key().unwrap().to_cbor_value().unwrap();
+        let root_key = pub_keys
+            .next()
+            .unwrap()
+            .to_cose_key()
+            .unwrap()
+            .to_cbor_value()
+            .unwrap();
         let mut chain = vec![root_key];
         chain.extend(pub_keys.enumerate().map(|(n, key)| {
             let entry = Entry::from_payload(&valid_payload(n, key)).unwrap();
             entry.sign(&keys[n]).to_cbor_value().unwrap()
         }));
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options::default(),
+        };
         Chain::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
     }
 
@@ -254,11 +314,18 @@ mod tests {
         .unwrap();
         let entry_pub_key = PrivateKey::from_pem(P256_KEY_PEM[0]).public_key();
         let entry = Entry::from_payload(&valid_payload(0, entry_pub_key)).unwrap();
-        let chain = vec![root_cose_key, entry.sign(&root_key).to_cbor_value().unwrap()];
+        let chain = vec![
+            root_cose_key,
+            entry.sign(&root_key).to_cbor_value().unwrap(),
+        ];
         let cbor = serialize(Value::Array(chain));
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options::default(),
+        };
         Chain::from_cbor(&session, &cbor).unwrap_err();
-        let session = Session { options: Options::vsr13() };
+        let session = Session {
+            options: Options::vsr13(),
+        };
         Chain::from_cbor(&session, &cbor).unwrap();
     }
 
@@ -271,7 +338,9 @@ mod tests {
             pub_key.to_cose_key().unwrap().to_cbor_value().unwrap(),
             entry.sign(&key).to_cbor_value().unwrap(),
         ];
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options::default(),
+        };
         let form = ChainForm::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
         assert!(matches!(form, ChainForm::Degenerate(_)));
     }
@@ -284,10 +353,17 @@ mod tests {
         let entry_pub_key = PrivateKey::from_pem(ED25519_KEY_PEM[0]).public_key();
         let entry = Entry::from_payload(&valid_payload(0, entry_pub_key)).unwrap();
         let chain = vec![
-            root_key.public_key().to_cose_key().unwrap().to_cbor_value().unwrap(),
+            root_key
+                .public_key()
+                .to_cose_key()
+                .unwrap()
+                .to_cbor_value()
+                .unwrap(),
             entry.sign(&root_key).to_cbor_value().unwrap(),
         ];
-        let session = Session { options: Options::default() };
+        let session = Session {
+            options: Options::default(),
+        };
         let form = ChainForm::from_cbor(&session, &serialize(Value::Array(chain))).unwrap();
         assert!(matches!(form, ChainForm::Proper(_)));
     }

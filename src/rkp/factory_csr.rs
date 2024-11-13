@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn from_json_valid_v2_ed25519() {
-        let json = fs::read_to_string("testdata/factory_csr/v2_ed25519_valid.json").unwrap();
+        let json = fs::read_to_string("tests/data/factory_csr/v2_ed25519_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
         let subject_public_key = parse_pem_public_key_or_panic(
             "-----BEGIN PUBLIC KEY-----\n\
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn from_json_valid_v3_ed25519() {
-        let json = fs::read_to_string("testdata/factory_csr/v3_ed25519_valid.json").unwrap();
+        let json = fs::read_to_string("tests/data/factory_csr/v3_ed25519_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
         if let Csr::V3 {
             device_info,
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn from_json_valid_v2_p256() {
-        let json = fs::read_to_string("testdata/factory_csr/v2_p256_valid.json").unwrap();
+        let json = fs::read_to_string("tests/data/factory_csr/v2_p256_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
         let pem = "-----BEGIN PUBLIC KEY-----\n\
                    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERd9pHZbUJ/b4IleUGDN8fs8+LDxE\n\
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn from_json_valid_v3_p256() {
-        let json = fs::read_to_string("testdata/factory_csr/v3_p256_valid.json").unwrap();
+        let json = fs::read_to_string("tests/data/factory_csr/v3_p256_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
         if let Csr::V3 {
             device_info,
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn from_json_name_is_missing() {
-        let mut value = json_map_from_file("testdata/factory_csr/v2_ed25519_valid.json").unwrap();
+        let mut value = json_map_from_file("tests/data/factory_csr/v2_ed25519_valid.json").unwrap();
         value.remove_entry("name");
         let json = serde_json::to_string(&value).unwrap();
         let err = FactoryCsr::from_json(&Session::default(), &json).unwrap_err();
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn from_json_name_is_wrong_type() {
-        let mut value = json_map_from_file("testdata/factory_csr/v2_ed25519_valid.json").unwrap();
+        let mut value = json_map_from_file("tests/data/factory_csr/v2_ed25519_valid.json").unwrap();
         value.insert("name".to_string(), Value::Object(Map::default()));
         let json = serde_json::to_string(&value).unwrap();
         let err = FactoryCsr::from_json(&Session::default(), &json).unwrap_err();
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn from_json_extra_tag_is_ignored() {
-        let mut value = json_map_from_file("testdata/factory_csr/v2_ed25519_valid.json").unwrap();
+        let mut value = json_map_from_file("tests/data/factory_csr/v2_ed25519_valid.json").unwrap();
         value.insert("extra".to_string(), Value::Bool(true));
         let json = serde_json::to_string(&value).unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();

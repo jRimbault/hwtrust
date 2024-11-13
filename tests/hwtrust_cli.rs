@@ -11,7 +11,7 @@ fn exit_code_for_good_chain() {
         .args([
             "dice-chain",
             "--allow-any-mode",
-            "testdata/dice/valid_ed25519.chain",
+            "tests/data/dice/valid_ed25519.chain",
         ])
         .output()
         .unwrap();
@@ -21,7 +21,7 @@ fn exit_code_for_good_chain() {
 #[test]
 fn exit_code_for_bad_chain() {
     let output = Command::new(hwtrust_bin())
-        .args(["dice-chain", "testdata/dice/bad_p256.chain"])
+        .args(["dice-chain", "tests/data/dice/bad_p256.chain"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -30,7 +30,7 @@ fn exit_code_for_bad_chain() {
 #[test]
 fn factory_csr_empty_input_fails() {
     let output = Command::new(hwtrust_bin())
-        .args(["dice-chain", "testdata/dice/bad_p256.chain"])
+        .args(["dice-chain", "tests/data/dice/bad_p256.chain"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -42,7 +42,7 @@ fn factory_csr_multiple_valid_csrs_succeeds() {
     let output = Command::new(hwtrust_bin())
         .args([
             "factory-csr",
-            "testdata/factory_csr/all_versions_valid.json",
+            "tests/data/factory_csr/all_versions_valid.json",
         ])
         .output()
         .unwrap();
@@ -54,7 +54,7 @@ fn factory_csr_one_invalid_csr_of_multiple_fails() {
     let output = Command::new(hwtrust_bin())
         .args([
             "factory-csr",
-            "testdata/factory_csr/all_versions_invalid.json",
+            "tests/data/factory_csr/all_versions_invalid.json",
         ])
         .output()
         .unwrap();
@@ -64,7 +64,7 @@ fn factory_csr_one_invalid_csr_of_multiple_fails() {
 #[test]
 fn exit_code_for_good_csr() {
     let output = Command::new(hwtrust_bin())
-        .args(["csr", "testdata/csr/valid_csr.cbor"])
+        .args(["csr", "tests/data/csr/valid_csr.cbor"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -73,7 +73,7 @@ fn exit_code_for_good_csr() {
 #[test]
 fn exit_code_for_bad_csr() {
     let output = Command::new(hwtrust_bin())
-        .args(["csr", "testdata/csr/bad_csr.cbor"])
+        .args(["csr", "tests/data/csr/bad_csr.cbor"])
         .output()
         .unwrap();
     assert!(!output.status.success());
