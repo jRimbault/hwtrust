@@ -1,16 +1,38 @@
-use crate::cbor::field_value::FieldValue;
+use crate::cbor::field_value::{FieldValue, FieldValueError};
 use crate::rkp::{
     DeviceInfo, DeviceInfoBootloaderState, DeviceInfoSecurityLevel, DeviceInfoVbState,
 };
-use anyhow::{bail, ensure, Context, Result};
 use ciborium::value::Value;
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+enum Constraint {
+    Field(#[from] FieldValueError),
+    Unexpected(#[from] Unexpected),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum Unexpected {
+    #[error("Unexpected DeviceInfo kv-pair: ({key:?},{value:?})")]
+    KeyValue {
+        key: ciborium::Value,
+        value: ciborium::Value,
+    },
+    #[error(
+        "Parsed DeviceInfo version '{version}' does not match expected version '{explicit_version:?}'"
+    )]
+    Version {
+        version: u32,
+        explicit_version: Option<u32>,
+    },
+}
 
 impl DeviceInfo {
     /// Create a new DeviceInfo struct from Values parsed by ciborium
     pub fn from_cbor_values(
         values: Vec<(Value, Value)>,
         explicit_version: Option<u32>,
-    ) -> Result<Self> {
+    ) -> Result<Self, Constraint> {
         let mut brand = FieldValue::new("brand");
         let mut manufacturer = FieldValue::new("manufacturer");
         let mut product = FieldValue::new("product");
@@ -44,17 +66,19 @@ impl DeviceInfo {
                 Some("security_level") => &mut security_level,
                 Some("fused") => &mut fused,
                 Some("version") => &mut version,
-                _ => bail!("Unexpected DeviceInfo kv-pair: ({key:?},{value:?})"),
+                _ => return Err(Unexpected::KeyValue { key, value })?,
             };
             field_value.set_once(value)?;
         }
 
         let version = match version.into_optional_u32() {
             Ok(Some(v)) if v == explicit_version.unwrap_or(v) => v,
-            Ok(Some(v)) => bail!(
-                "Parsed DeviceInfo version '{v}' does not match expected version \
-                '{explicit_version:?}'"
-            ),
+            Ok(Some(v)) => {
+                return Err(Unexpected::Version {
+                    version: v,
+                    explicit_version,
+                })?
+            }
             Ok(None) => explicit_version.context("missing required version")?,
             Err(e) => return Err(e.into()),
         };
@@ -81,12 +105,14 @@ impl DeviceInfo {
             fused: fused.into_bool()?,
             version: version.try_into()?,
         };
-        info.validate()?;
-        Ok(info)
+        info.validate()
     }
 
-    fn validate(&self) -> Result<()> {
-        ensure!(!self.vbmeta_digest.is_empty(), "vbmeta_digest must not be empty");
+    fn validate(self) -> Result<Self> {
+        ensure!(
+            !self.vbmeta_digest.is_empty(),
+            "vbmeta_digest must not be empty"
+        );
         ensure!(
             !self.vbmeta_digest.iter().all(|b| *b == 0u8),
             "vbmeta_digest must not be all zeros. Got {:?}",
@@ -118,7 +144,7 @@ impl DeviceInfo {
                 self
             );
         }
-        Ok(())
+        Ok(self)
     }
 }
 
@@ -238,7 +264,10 @@ mod tests {
 
         let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
         println!("{err:?}");
-        assert!(err.to_string().contains("vbmeta_digest must not be empty"), "{err:?}");
+        assert!(
+            err.to_string().contains("vbmeta_digest must not be empty"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -248,7 +277,11 @@ mod tests {
 
         let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
         println!("{err:?}");
-        assert!(err.to_string().contains("vbmeta_digest must not be all zeros"), "{err:?}");
+        assert!(
+            err.to_string()
+                .contains("vbmeta_digest must not be all zeros"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -257,7 +290,10 @@ mod tests {
         values.push(("vb_state".into(), "avf".into()));
 
         let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
-        assert!(err.to_string().contains("Non-AVF security level"), "{err:?}");
+        assert!(
+            err.to_string().contains("Non-AVF security level"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -266,7 +302,10 @@ mod tests {
         values.push(("bootloader_state".into(), "avf".into()));
 
         let err = DeviceInfo::from_cbor_values(values, None).unwrap_err();
-        assert!(err.to_string().contains("Non-AVF security level"), "{err:?}");
+        assert!(
+            err.to_string().contains("Non-AVF security level"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -277,7 +316,11 @@ mod tests {
             .chain(vec![("vb_state".into(), "green".into())])
             .collect();
         let err = DeviceInfo::from_cbor_values(values, Some(3)).unwrap_err();
-        assert!(err.to_string().contains("AVF security level requires AVF fields"), "{err:?}");
+        assert!(
+            err.to_string()
+                .contains("AVF security level requires AVF fields"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -344,6 +387,9 @@ mod tests {
     }
 
     fn get_valid_values_filtered<F: Fn(&str) -> bool>(filter: F) -> Vec<(Value, Value)> {
-        get_valid_values().into_iter().filter(|x| filter(x.0.as_text().unwrap())).collect()
+        get_valid_values()
+            .into_iter()
+            .filter(|x| filter(x.0.as_text().unwrap()))
+            .collect()
     }
 }

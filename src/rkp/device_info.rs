@@ -1,5 +1,3 @@
-use anyhow::anyhow;
-use hex;
 use std::fmt;
 
 #[non_exhaustive]
@@ -55,7 +53,7 @@ impl fmt::Debug for DeviceInfo {
             .field("device", &self.device)
             .field("vb_state", &self.vb_state)
             .field("bootloader_state", &self.bootloader_state)
-            .field("vbmeta_digest", &hex::encode(&self.vbmeta_digest))
+            .field("vbmeta_digest", &crate::hex::Hex(&self.vbmeta_digest))
             .field("os_version", os_version)
             .field("system_patch_level", &self.system_patch_level)
             .field("boot_patch_level", &self.boot_patch_level)
@@ -77,15 +75,19 @@ pub enum DeviceInfoBootloaderState {
     Avf,
 }
 
-impl TryFrom<&str> for DeviceInfoBootloaderState {
-    type Error = anyhow::Error;
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid bootloader state: `{0}`")]
+struct InvalidBootLoaderState<'a>(&'a str);
 
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
+impl<'a> TryFrom<&'a str> for DeviceInfoBootloaderState {
+    type Error = InvalidBootLoaderState<'a>;
+
+    fn try_from(s: &'a str) -> Result<Self, Self::Error> {
         match s.to_ascii_lowercase().as_str() {
             "locked" => Ok(Self::Locked),
             "unlocked" => Ok(Self::Unlocked),
             "avf" => Ok(Self::Avf),
-            _ => Err(anyhow!("Invalid bootloader state: `{s}`")),
+            _ => Err(InvalidBootLoaderState(s)),
         }
     }
 }
@@ -103,16 +105,20 @@ pub enum DeviceInfoVbState {
     Avf,
 }
 
-impl TryFrom<&str> for DeviceInfoVbState {
-    type Error = anyhow::Error;
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid Vb state: `{0}`")]
+struct InvalidVbState<'a>(&'a str);
 
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
+impl<'a> TryFrom<&'a str> for DeviceInfoVbState {
+    type Error = InvalidVbState<'a>;
+
+    fn try_from(s: &'a str) -> Result<Self, Self::Error> {
         match s.to_ascii_lowercase().as_str() {
             "green" => Ok(Self::Green),
             "yellow" => Ok(Self::Yellow),
             "orange" => Ok(Self::Orange),
             "avf" => Ok(Self::Avf),
-            _ => Err(anyhow!("Invalid VB state: `{s}`")),
+            _ => Err(InvalidVbState(s)),
         }
     }
 }
@@ -126,14 +132,18 @@ pub enum DeviceInfoVersion {
     V3,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid version: `{0}`")]
+struct InvalidVersion(u32);
+
 impl TryFrom<u32> for DeviceInfoVersion {
-    type Error = anyhow::Error;
+    type Error = InvalidVersion;
 
     fn try_from(i: u32) -> Result<Self, Self::Error> {
         match i {
             2 => Ok(Self::V2),
             3 => Ok(Self::V3),
-            _ => Err(anyhow!("Invalid version: `{i}`")),
+            _ => Err(InvalidVersion(i)),
         }
     }
 }
@@ -149,15 +159,19 @@ pub enum DeviceInfoSecurityLevel {
     Avf,
 }
 
-impl TryFrom<&str> for DeviceInfoSecurityLevel {
-    type Error = anyhow::Error;
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid security level: `{0}`")]
+struct InvalidSecurityLevel<'a>(&'a str);
 
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
+impl<'a> TryFrom<&'a str> for DeviceInfoSecurityLevel {
+    type Error = InvalidSecurityLevel<'a>;
+
+    fn try_from(s: &'a str) -> Result<Self, Self::Error> {
         match s.to_ascii_lowercase().as_str() {
             "strongbox" => Ok(Self::StrongBox),
             "tee" => Ok(Self::Tee),
             "avf" => Ok(Self::Avf),
-            _ => Err(anyhow!("Invalid security level: `{s}`")),
+            _ => Err(InvalidSecurityLevel(s)),
         }
     }
 }
@@ -181,17 +195,32 @@ mod tests {
 
     #[test]
     fn vb_state_from_string() {
-        assert_eq!(DeviceInfoVbState::try_from("greEN").unwrap(), DeviceInfoVbState::Green);
-        assert_eq!(DeviceInfoVbState::try_from("YeLLoW").unwrap(), DeviceInfoVbState::Yellow);
-        assert_eq!(DeviceInfoVbState::try_from("ORange").unwrap(), DeviceInfoVbState::Orange);
+        assert_eq!(
+            DeviceInfoVbState::try_from("greEN").unwrap(),
+            DeviceInfoVbState::Green
+        );
+        assert_eq!(
+            DeviceInfoVbState::try_from("YeLLoW").unwrap(),
+            DeviceInfoVbState::Yellow
+        );
+        assert_eq!(
+            DeviceInfoVbState::try_from("ORange").unwrap(),
+            DeviceInfoVbState::Orange
+        );
         DeviceInfoVbState::try_from("bad").unwrap_err();
     }
 
     #[test]
     fn version_from_int() {
         DeviceInfoVersion::try_from(1).unwrap_err();
-        assert_eq!(DeviceInfoVersion::try_from(2).unwrap(), DeviceInfoVersion::V2);
-        assert_eq!(DeviceInfoVersion::try_from(3).unwrap(), DeviceInfoVersion::V3);
+        assert_eq!(
+            DeviceInfoVersion::try_from(2).unwrap(),
+            DeviceInfoVersion::V2
+        );
+        assert_eq!(
+            DeviceInfoVersion::try_from(3).unwrap(),
+            DeviceInfoVersion::V3
+        );
         DeviceInfoVersion::try_from(4).unwrap_err();
     }
 
@@ -201,7 +230,10 @@ mod tests {
             DeviceInfoSecurityLevel::try_from("StrongBOX").unwrap(),
             DeviceInfoSecurityLevel::StrongBox
         );
-        assert_eq!(DeviceInfoSecurityLevel::try_from("TeE").unwrap(), DeviceInfoSecurityLevel::Tee);
+        assert_eq!(
+            DeviceInfoSecurityLevel::try_from("TeE").unwrap(),
+            DeviceInfoSecurityLevel::Tee
+        );
         DeviceInfoSecurityLevel::try_from("insecure").unwrap_err();
     }
 }

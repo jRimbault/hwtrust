@@ -39,7 +39,6 @@ The `rkp_factory_extraction_tool` is used in the manufacturing process to captur
 a "CSR" that contains a full DICE chain and other device properties. The `factory-csr`
 subcommand parses and validates the output of `rkp_factory_extraction_tool`.
 
-
 ```shell
 hwtrust factory-csr csr.json
 ```

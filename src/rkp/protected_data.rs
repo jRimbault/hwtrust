@@ -1,6 +1,5 @@
-use anyhow::Result;
 use openssl::x509::X509;
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, convert::Infallible, fmt};
 
 use crate::dice::ChainForm;
 
@@ -24,11 +23,11 @@ pub enum UdsCertsEntry {
 
 impl ProtectedData {
     pub fn new(mac_key: Vec<u8>, dice_chain: ChainForm, uds_certs: Option<UdsCerts>) -> Self {
-        Self { mac_key, dice_chain, uds_certs }
-    }
-
-    pub fn dice_chain(&self) -> ChainForm {
-        self.dice_chain.clone()
+        Self {
+            mac_key,
+            dice_chain,
+            uds_certs,
+        }
     }
 }
 
@@ -39,7 +38,7 @@ impl UdsCerts {
 }
 
 impl UdsCertsEntry {
-    pub(crate) fn new_x509_chain(der_encoded_chain: Vec<Vec<u8>>) -> Result<Self> {
+    pub(crate) fn new_x509_chain(der_encoded_chain: Vec<Vec<u8>>) -> Result<Self, Infallible> {
         Ok(Self::X509Chain(der_encoded_chain))
     }
 }
@@ -47,7 +46,7 @@ impl UdsCertsEntry {
 impl fmt::Debug for ProtectedData {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("ProtectedData")
-            .field("mac_key", &hex::encode(&self.mac_key))
+            .field("mac_key", &crate::hex::Hex(&self.mac_key))
             .field("dice_chain", &self.dice_chain)
             .field("uds_certs", &self.uds_certs)
             .finish()
@@ -69,7 +68,14 @@ fn format_x509_chain(fmt: &mut fmt::Formatter, chain: &Vec<Vec<u8>>) -> fmt::Res
     Ok(())
 }
 
-fn x509_der_to_pem(der: &[u8]) -> Result<String> {
+#[derive(Debug, thiserror::Error)]
+#[error("{0:?}")]
+enum Error {
+    OpenSsl(#[from] openssl::error::ErrorStack),
+    Utf8(#[from] std::str::Utf8Error),
+}
+
+fn x509_der_to_pem(der: &[u8]) -> Result<String, Error> {
     let utf8 = X509::from_der(der)?.to_pem()?;
     Ok(std::str::from_utf8(&utf8)?.to_string())
 }

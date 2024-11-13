@@ -1,8 +1,6 @@
 use crate::rkp::Csr;
-use crate::session::{RkpInstance, Session};
-use anyhow::{bail, Result};
+use crate::session::Session;
 use serde_json::{Map, Value};
-use std::str::FromStr;
 
 /// Represents a "Factory CSR", which is a JSON value captured for each device on the factory
 /// line. This JSON is uploaded to the RKP backend to register the device. We reuse the CSR
@@ -17,31 +15,45 @@ pub struct FactoryCsr {
     pub name: String,
 }
 
-fn get_string_from_map(fields: &Map<String, Value>, key: &str) -> Result<String> {
+#[derive(Debug, thiserror::Error)]
+#[error("{0:?}")]
+enum FieldError {
+    #[error("Unable to locate key '{0}' in input")]
+    MissingKey(String),
+    #[error("Unexpected type for key '{0}'. Expected String.")]
+    ValueIsNotString(String),
+}
+
+fn get_string_from_map(fields: &Map<String, Value>, key: &str) -> Result<String, FieldError> {
     match fields.get(key) {
         Some(Value::String(s)) => Ok(s.to_string()),
-        Some(v) => bail!("Unexpected type for '{key}'. Expected String, found '{v:?}'"),
-        None => bail!("Unable to locate '{key}' in input"),
+        Some(_) => Err(FieldError::ValueIsNotString(key.to_owned())),
+        None => Err(FieldError::MissingKey(key.to_owned())),
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0:?}")]
+enum Error {
+    JsonDe(#[from] serde_json::Error),
+    ExpectedMap(serde_json::Value),
 }
 
 impl FactoryCsr {
     /// Parse the input JSON string into a CSR that was captured on the factory line. The
     /// format of the JSON data is defined by rkp_factory_extraction_tool.
-    pub fn from_json(session: &Session, json: &str) -> Result<Self> {
-        match serde_json::from_str(json) {
-            Ok(Value::Object(map)) => Self::from_map(session, map),
-            Ok(unexpected) => bail!("Expected a map, got some other type: {unexpected}"),
-            Err(e) => bail!("Error parsing input json: {e}"),
+    pub fn from_json(session: &Session, json: &str) -> Result<Self, Error> {
+        let value: serde_json::Value = serde_json::from_str(json)?;
+        match value {
+            Value::Object(map) => Self::from_map(session, map),
+            unexpected => Err(Error::ExpectedMap(value)),
         }
     }
 
     fn from_map(session: &Session, fields: Map<String, Value>) -> Result<Self> {
         let base64 = get_string_from_map(&fields, "csr")?;
         let name = get_string_from_map(&fields, "name")?;
-        let mut new_session = session.clone();
-        new_session.set_rkp_instance(RkpInstance::from_str(&name)?);
-        let csr = Csr::from_base64_cbor(&new_session, &base64)?;
+        let csr = Csr::from_base64_cbor(session, &base64)?;
         Ok(Self { csr, name })
     }
 }
@@ -54,7 +66,7 @@ mod tests {
     use crate::rkp::device_info::DeviceInfoVersion;
     use crate::rkp::factory_csr::FactoryCsr;
     use crate::rkp::{ProtectedData, UdsCerts, UdsCertsEntry};
-    use anyhow::anyhow;
+    use anyhow::{anyhow, Result};
     use itertools::Itertools;
     use openssl::{pkey::PKey, x509::X509};
     use std::fs;
@@ -108,9 +120,10 @@ mod tests {
             .collect_vec();
 
         let mut uds_certs = UdsCerts::new();
-        uds_certs
-            .0
-            .insert("google-test".to_string(), UdsCertsEntry::new_x509_chain(chain).unwrap());
+        uds_certs.0.insert(
+            "google-test".to_string(),
+            UdsCertsEntry::new_x509_chain(chain).unwrap(),
+        );
         assert_eq!(
             csr,
             FactoryCsr {
@@ -129,8 +142,12 @@ mod tests {
     fn from_json_valid_v3_ed25519() {
         let json = fs::read_to_string("testdata/factory_csr/v3_ed25519_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        if let Csr::V3 { dice_chain, uds_certs, csr_payload, .. } = csr.csr {
-            assert_eq!(csr_payload.device_info, test_device_info(DeviceInfoVersion::V3));
+        if let Csr::V3 {
+            device_info,
+            dice_chain,
+        } = csr.csr
+        {
+            assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
             let root_public_key = parse_pem_public_key_or_panic(
                 "-----BEGIN PUBLIC KEY-----\n\
                 MCowBQYDK2VwAyEA3FEn/nhqoGOKNok1AJaLfTKI+aFXHf4TfC42vUyPU6s=\n\
@@ -143,7 +160,6 @@ mod tests {
                 }
                 ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
             }
-            assert_eq!(uds_certs.len(), 0);
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }
@@ -157,8 +173,10 @@ mod tests {
                    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERd9pHZbUJ/b4IleUGDN8fs8+LDxE\n\
                    vG6VX1dkw0sClFs4imbzfXGbocEq74S7TQiyZkd1LhY6HRZnTC51KoGDIA==\n\
                    -----END PUBLIC KEY-----\n";
-        let subject_public_key =
-            PKey::public_key_from_pem(pem.as_bytes()).unwrap().try_into().unwrap();
+        let subject_public_key = PKey::public_key_from_pem(pem.as_bytes())
+            .unwrap()
+            .try_into()
+            .unwrap();
         let degenerate = ChainForm::Degenerate(
             DegenerateChain::new("self-signed", "self-signed", subject_public_key).unwrap(),
         );
@@ -180,8 +198,12 @@ mod tests {
     fn from_json_valid_v3_p256() {
         let json = fs::read_to_string("testdata/factory_csr/v3_p256_valid.json").unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        if let Csr::V3 { dice_chain, uds_certs, csr_payload, .. } = csr.csr {
-            assert_eq!(csr_payload.device_info, test_device_info(DeviceInfoVersion::V3));
+        if let Csr::V3 {
+            device_info,
+            dice_chain,
+        } = csr.csr
+        {
+            assert_eq!(device_info, test_device_info(DeviceInfoVersion::V3));
             let root_public_key = parse_pem_public_key_or_panic(
                 "-----BEGIN PUBLIC KEY-----\n\
                 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEqT6ujVegwBbVWtsZeZmvN4WO3THx\n\
@@ -195,82 +217,9 @@ mod tests {
                 }
                 ChainForm::Degenerate(d) => panic!("Parsed chain is not proper: {:?}", d),
             }
-            assert_eq!(uds_certs.len(), 0);
         } else {
             panic!("Parsed CSR was not V3: {:?}", csr);
         }
-    }
-
-    fn get_pem_or_die(cert: Option<&X509>) -> String {
-        let cert = cert.unwrap_or_else(|| panic!("Missing x.509 cert"));
-        let pem =
-            cert.to_pem().unwrap_or_else(|e| panic!("Failed to encode X.509 cert to PEM: {e}"));
-        String::from_utf8_lossy(&pem).to_string()
-    }
-
-    #[test]
-    fn from_json_valid_v3_p256_with_uds_certs() {
-        let json =
-            fs::read_to_string("testdata/factory_csr/v3_p256_valid_with_uds_certs.json").unwrap();
-        let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
-        if let Csr::V3 { uds_certs, .. } = csr.csr {
-            assert_eq!(uds_certs.len(), 1);
-            let chain = uds_certs.get("test-signer-name").unwrap_or_else(|| {
-                panic!("Unable to find 'test-signer-name' in UdsCerts: {uds_certs:?}")
-            });
-            assert_eq!(chain.len(), 2);
-            assert_eq!(
-                get_pem_or_die(chain.first()),
-                "-----BEGIN CERTIFICATE-----\n\
-                MIIBaDCCARqgAwIBAgIBezAFBgMrZXAwKzEVMBMGA1UEChMMRmFrZSBDb21wYW55\n\
-                MRIwEAYDVQQDEwlGYWtlIFJvb3QwHhcNMjQxMDI5MTcyMzUzWhcNNDkxMDIzMTcy\n\
-                MzUzWjArMRUwEwYDVQQKEwxGYWtlIENvbXBhbnkxEjAQBgNVBAMTCUZha2UgUm9v\n\
-                dDAqMAUGAytlcAMhAP8RO2gUf4KpszSCofM+eS9mZ5vsy5Nv1Nb1rOWeixbko2Mw\n\
-                YTAdBgNVHQ4EFgQUDAq0XZYLX/NPsnJb0sSoF7rSYG4wHwYDVR0jBBgwFoAUDAq0\n\
-                XZYLX/NPsnJb0sSoF7rSYG4wDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n\
-                AgQwBQYDK2VwA0EAfTXtKTy8RCPxD0CaPpcHkzWkjwXvUmDILBKUJaDPE/lUxr8I\n\
-                TEr9On/8C+eY7fy4SAdtc7EtLECTlNRUSc4ECQ==\n\
-                -----END CERTIFICATE-----\n"
-            );
-            assert_eq!(
-                get_pem_or_die(chain.get(1)),
-                "-----BEGIN CERTIFICATE-----\n\
-                MIIBmzCCAU2gAwIBAgICAcgwBQYDK2VwMCsxFTATBgNVBAoTDEZha2UgQ29tcGFu\n\
-                eTESMBAGA1UEAxMJRmFrZSBSb290MB4XDTI0MTAyOTE3MjM1M1oXDTQ5MTAyMzE3\n\
-                MjM1M1owLjEVMBMGA1UEChMMRmFrZSBDb21wYW55MRUwEwYDVQQDEwxGYWtlIENo\n\
-                aXBzZXQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQRE36cvLi83QAMZciuRW9J\n\
-                NEh8ZRFHWplE0u4i1riTdBFaclau67j+b4R4J4d23+xxG85tjtxvb8Ll8jOO1RNq\n\
-                o2MwYTAdBgNVHQ4EFgQUUToqIkrD77ArjRBU8Hk4nwsotoEwHwYDVR0jBBgwFoAU\n\
-                DAq0XZYLX/NPsnJb0sSoF7rSYG4wDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8E\n\
-                BAMCAgQwBQYDK2VwA0EA3g/zaq6Ld2Y+Hs+/6RA3Kmm9DgJQtJhbKILX75ujfCCo\n\
-                gl+QTFTWz05O8vjNHVVNtryHbJ0UAeL5aazoBC3gCA==\n\
-                -----END CERTIFICATE-----\n"
-            );
-        } else {
-            panic!("Parsed CSR was not V3: {:?}", csr);
-        }
-    }
-
-    #[test]
-    fn from_json_v3_p256_with_mismatch_uds_certs() {
-        let json =
-            fs::read_to_string("testdata/factory_csr/v3_p256_mismatched_uds_certs.json").unwrap();
-        let err = FactoryCsr::from_json(&Session::default(), &json).unwrap_err();
-        assert!(
-            err.to_string().contains("does not match the DICE chain root"),
-            "Expected mismatch between UDS_pub and UdsCerts leaf"
-        );
-    }
-
-    #[test]
-    fn from_json_v3_p256_with_extra_uds_cert_in_chain() {
-        let json = fs::read_to_string("testdata/factory_csr/v3_p256_extra_uds_cert_in_chain.json")
-            .unwrap();
-        let err = FactoryCsr::from_json(&Session::default(), &json).unwrap_err();
-        assert!(
-            err.to_string().contains("Verified chain doesn't match input"),
-            "Expected cert validation to fail due to extra cert in UDS chain"
-        );
     }
 
     #[test]
@@ -312,15 +261,5 @@ mod tests {
         let json = serde_json::to_string(&value).unwrap();
         let csr = FactoryCsr::from_json(&Session::default(), &json).unwrap();
         assert_eq!(csr.name, "default");
-    }
-
-    #[test]
-    fn from_json_valid_v3_avf_with_rkpvm_markers() {
-        let json = fs::read_to_string("testdata/factory_csr/v3_avf_valid_with_rkpvm_markers.json")
-            .unwrap();
-        let mut session = Session::default();
-        session.set_allow_any_mode(true);
-        let csr = FactoryCsr::from_json(&session, &json).unwrap();
-        assert_eq!(csr.name, "avf");
     }
 }

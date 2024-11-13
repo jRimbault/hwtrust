@@ -4,8 +4,6 @@
 //! NOTE: Since CSR version 3 drops the encryption requirement, Google is publishing
 //! the private Google EEKs so that testing on platforms that support CSR versions
 //! 1 & 2 have diagnostic parity with CSR v3 systems.
-
-use anyhow::{bail, Context, Result};
 use coset::{CborSerializable, CoseKdfContextBuilder, Nonce, PartyInfo, SuppPubInfoBuilder};
 use openssl::{
     bn::{BigNum, BigNumContext},
@@ -91,7 +89,9 @@ fn kdf_party_info<T: HasPublic>(identity: &[u8], key: &PKeyRef<T>) -> Result<Par
 
 fn raw_key_bytes<T: HasPublic>(key: &PKeyRef<T>) -> Result<Vec<u8>> {
     match key.id() {
-        Id::X25519 => key.raw_public_key().context("Unable to fetch raw public key"),
+        Id::X25519 => key
+            .raw_public_key()
+            .context("Unable to fetch raw public key"),
         Id::EC => {
             let ec = key.ec_key()?;
             let mut ctx = BigNumContext::new()?;

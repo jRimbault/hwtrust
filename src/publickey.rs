@@ -1,11 +1,10 @@
 //! This module describes a public key that is restricted to one of the supported algorithms.
 
-use anyhow::{ensure, Context, Result};
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{HasParams, Id, PKey, PKeyRef, Public};
 use openssl::sign::Verifier;
-use std::error::Error;
+use std::error::Error as StdError;
 use std::fmt;
 
 /// The kinds of digital signature keys that are supported.
@@ -23,7 +22,7 @@ pub(crate) enum KeyAgreementKind {
 }
 
 /// Enumeration of the kinds of elliptic curve keys that are supported.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EcKind {
     P256,
     P384,
@@ -48,6 +47,14 @@ pub struct KeyAgreementPublicKey {
     pkey: PKeyPublicWrapper,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("failed to crate verifier")]
+    CreateVerifier,
+    #[error("failed to verify signature")]
+    Signature,
+}
+
 impl PublicKey {
     pub(crate) fn kind(&self) -> SignatureKind {
         self.kind
@@ -59,15 +66,18 @@ impl PublicKey {
 
     /// Verify that the signature obtained from signing the given message
     /// with the PublicKey matches the signature provided.
-    pub fn verify(&self, signature: &[u8], message: &[u8]) -> Result<()> {
+    pub fn verify(&self, signature: &[u8], message: &[u8]) -> Result<(), Error> {
         let mut verifier = match self.kind {
             SignatureKind::Ed25519 => Verifier::new_without_digest(&self.pkey.0),
             SignatureKind::Ec(ec) => Verifier::new(digest_for_ec(ec), &self.pkey.0),
         }
-        .with_context(|| format!("Failed to create verifier {:?}", self.kind))?;
-        let verified =
-            verifier.verify_oneshot(signature, message).context("Failed to verify signature")?;
-        ensure!(verified, "Signature verification failed.");
+        .or(Err(Error::CreateVerifier))?;
+        let verified = verifier
+            .verify_oneshot(signature, message)
+            .or(Err(Error::Signature))?;
+        if !verified {
+            return Err(Error::Signature);
+        }
         Ok(())
     }
 
@@ -134,14 +144,17 @@ impl fmt::Display for TryFromPKeyError {
     }
 }
 
-impl Error for TryFromPKeyError {}
+impl StdError for TryFromPKeyError {}
 
 impl TryFrom<PKey<Public>> for PublicKey {
     type Error = TryFromPKeyError;
 
     fn try_from(pkey: PKey<Public>) -> Result<Self, Self::Error> {
         let kind = PublicKey::pkey_kind(&pkey).ok_or(TryFromPKeyError(()))?;
-        Ok(Self { kind, pkey: PKeyPublicWrapper(pkey) })
+        Ok(Self {
+            kind,
+            pkey: PKeyPublicWrapper(pkey),
+        })
     }
 }
 
@@ -150,7 +163,10 @@ impl TryFrom<PKey<Public>> for KeyAgreementPublicKey {
 
     fn try_from(pkey: PKey<Public>) -> Result<Self, Self::Error> {
         let kind = KeyAgreementPublicKey::pkey_kind(&pkey).ok_or(TryFromPKeyError(()))?;
-        Ok(Self { kind, pkey: PKeyPublicWrapper(pkey) })
+        Ok(Self {
+            kind,
+            pkey: PKeyPublicWrapper(pkey),
+        })
     }
 }
 
@@ -305,12 +321,12 @@ pub(crate) mod testkeys {
             public_from_private(&self.pkey).try_into().unwrap()
         }
 
-        pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
+        pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, openssl::error::ErrorStack> {
             let mut signer = match self.kind {
                 SignatureKind::Ed25519 => Signer::new_without_digest(&self.pkey)?,
                 SignatureKind::Ec(ec) => Signer::new(digest_for_ec(ec), &self.pkey)?,
             };
-            signer.sign_oneshot_to_vec(message).context("signing message")
+            signer.sign_oneshot_to_vec(message)
         }
     }
 
@@ -328,10 +344,6 @@ pub(crate) mod testkeys {
     /// A selection of Ed25519 private keys.
     pub const ED25519_KEY_PEM: &[&str] = &["-----BEGIN PRIVATE KEY-----\n\
         MC4CAQAwBQYDK2VwBCIEILKW0KEeuieFxhDAzigQPE4XRTiQx+0/AlAjJqHmUWE6\n\
-        -----END PRIVATE KEY-----\n"];
-
-    pub const ED25519_KEY_WITH_LEADING_ZEROS_PEM: &[&str] = &["-----BEGIN PRIVATE KEY-----\n\
-        MC4CAQAwBQYDK2VwBCIEIBDTK4d0dffOye5RD6HsgcOFoDTtvQH1tPmr9RjpadxJ\n\
         -----END PRIVATE KEY-----\n"];
 
     /// A selection of elliptic curve P-256 private keys.
@@ -359,46 +371,21 @@ pub(crate) mod testkeys {
     ];
 
     /// A selection of EC keys that should have leading zeros in their coordinates
-    pub const EC2_KEY_WITH_LEADING_ZEROS_PEM: &[&str] = &[
-        // P256
-        // Public key has Y coordinate with most significant byte of 0x00
+    pub const P256_KEY_WITH_LEADING_ZEROS_PEM: &[&str] = &[
+        // 31 byte Y coordinate:
         "-----BEGIN PRIVATE KEY-----\n\
         MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCCWbRSB3imI03F5YNVq\n\
         8AN8ZbyzW/h+5BQ53caD5VkWJg==\n\
         -----END PRIVATE KEY-----\n",
-        // P256
-        // Public key has X coordinate with most significant byte of 0x00
+        // 31 byte X coordinate:
         "-----BEGIN PRIVATE KEY-----\n\
         MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCDe5E5WqNmCLxtsCNTc\n\
         UOb9CPXCn6l3CZpbrp0aivb+Bw==\n\
         -----END PRIVATE KEY-----\n",
-        // P384
-        // Public key has Y coordinate with most significant byte of 0x00
-        "-----BEGIN PRIVATE KEY-----\n\
-        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDCzgVHCz7wgmSdb7/IixYik\n\
-        3AuQceCtBTiFrJpgpGFluwgLUR0S2NpzIuty4M7xU74=\n\
-        -----END PRIVATE KEY-----\n",
-        // P384
-        // Public key has X coordinate with most significant byte of 0x00
-        "-----BEGIN PRIVATE KEY-----\n\
-        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDBoW+8zbvwf5fYOS8YPyPEH\n\
-        jHP71Vr1MnRYRp/yG1wbthW2XEu0UWbp4qrZ5WTnZPg=\n\
-        -----END PRIVATE KEY-----\n",
-    ];
-    pub const EC2_KEY_WITH_HIGH_BITS_SET_PEM: &[&str] = &[
-        // P256
-        // Public key has X & Y coordinate that both have most significant bit set,
-        // and some stacks will add a padding byte
+        // X & Y both have MSB set, and some stacks will add a padding byte
         "-----BEGIN PRIVATE KEY-----\n\
         MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCCWOWcXPDEVZ4Qz3EBK\n\
         uvSqhD9HmxDGxcNe3yxKi9pazw==\n\
-        -----END PRIVATE KEY-----\n",
-        // P384
-        // Public key has X & Y coordinate that both have most significant bit set,
-        // and some stacks will add a padding byte
-        "-----BEGIN PRIVATE KEY-----\n\
-        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDD2A69j5M/6oc6/WGoYln4t\n\
-        Alnn0C6kpJz1EVC+eH6y0YNrcGamz8pPY4NkzUB/tj4=\n\
         -----END PRIVATE KEY-----\n",
     ];
 
@@ -409,6 +396,25 @@ pub(crate) mod testkeys {
         GldmGksI5g82hjPRYscWNs/6pFxQTMcxABE+/1lWaryLR193ZD74VxVRIKDBluRs\n\
         uuHi+VayOreTX1/qlUoxgBT+XTI0nTdLn6WwO6vVO1NIkGEVnYvB2eM=\n\
         -----END PRIVATE KEY-----\n"];
+
+    /// A selection of EC keys that should have leading zeros in their coordinates
+    pub const P384_KEY_WITH_LEADING_ZEROS_PEM: &[&str] = &[
+        // 47 byte Y coordinate:
+        "-----BEGIN PRIVATE KEY-----\n\
+        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDCzgVHCz7wgmSdb7/IixYik\n\
+        3AuQceCtBTiFrJpgpGFluwgLUR0S2NpzIuty4M7xU74=\n\
+        -----END PRIVATE KEY-----\n",
+        // 47 byte X coordinate:
+        "-----BEGIN PRIVATE KEY-----\n\
+        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDBoW+8zbvwf5fYOS8YPyPEH\n\
+        jHP71Vr1MnRYRp/yG1wbthW2XEu0UWbp4qrZ5WTnZPg=\n\
+        -----END PRIVATE KEY-----\n",
+        // X & Y both have MSB set, and some stacks will add a padding byte
+        "-----BEGIN PRIVATE KEY-----\n\
+        ME4CAQAwEAYHKoZIzj0CAQYFK4EEACIENzA1AgEBBDD2A69j5M/6oc6/WGoYln4t\n\
+        Alnn0C6kpJz1EVC+eH6y0YNrcGamz8pPY4NkzUB/tj4=\n\
+        -----END PRIVATE KEY-----\n",
+    ];
 
     /// A selection of elliptic curve P-521 private keys.
     pub const P521_KEY_PEM: &[&str] = &["-----BEGIN PRIVATE KEY-----\n\

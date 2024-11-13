@@ -1,4 +1,4 @@
-use crate::publickey::PublicKey;
+use crate::{hex, publickey::PublicKey};
 use std::fmt::{self, Display, Formatter};
 use thiserror::Error;
 
@@ -82,11 +82,6 @@ impl Payload {
     pub fn authority_hash(&self) -> &[u8] {
         &self.authority_hash
     }
-
-    /// Returns whether the payload has an RKP VM marker.
-    pub fn has_rkpvm_marker(&self) -> bool {
-        self.config_desc.rkp_vm_marker()
-    }
 }
 
 impl Display for Payload {
@@ -95,16 +90,16 @@ impl Display for Payload {
         writeln!(f, "Subject: {}", self.subject)?;
         writeln!(f, "Mode: {:?}", self.mode)?;
         if let Some(code_desc) = &self.code_desc {
-            writeln!(f, "Code Desc: {}", hex::encode(code_desc))?;
+            writeln!(f, "Code Desc: {}", hex::Hex(&code_desc))?;
         }
-        writeln!(f, "Code Hash: {}", hex::encode(&self.code_hash))?;
+        writeln!(f, "Code Hash: {}", hex::Hex(&&self.code_hash))?;
         if let Some(config_hash) = &self.config_hash {
-            writeln!(f, "Config Hash: {}", hex::encode(config_hash))?;
+            writeln!(f, "Config Hash: {}", hex::Hex(&config_hash))?;
         }
         if let Some(authority_desc) = &self.authority_desc {
-            writeln!(f, "Authority Desc: {}", hex::encode(authority_desc))?;
+            writeln!(f, "Authority Desc: {}", hex::Hex(&authority_desc))?;
         }
-        writeln!(f, "Authority Hash: {}", hex::encode(&self.authority_hash))?;
+        writeln!(f, "Authority Hash: {}", hex::Hex(&&self.authority_hash))?;
         writeln!(f, "Config Desc {{")?;
         write!(f, "{}", &self.config_desc)?;
         writeln!(f, "}}")?;
@@ -119,16 +114,16 @@ impl fmt::Debug for Payload {
         debug.field("Subject", &self.subject);
         debug.field("Mode", &self.mode);
         if let Some(code_desc) = &self.code_desc {
-            debug.field("Code Desc", &hex::encode(code_desc));
+            debug.field("Code Desc", &hex::Hex(&code_desc));
         }
-        debug.field("Code Hash", &hex::encode(&self.code_hash));
+        debug.field("Code Hash", &hex::Hex(&&self.code_hash));
         if let Some(config_hash) = &self.config_hash {
-            debug.field("Config Hash", &hex::encode(config_hash));
+            debug.field("Config Hash", &hex::Hex(&config_hash));
         }
         if let Some(authority_desc) = &self.authority_desc {
-            debug.field("Authority Desc", &hex::encode(authority_desc));
+            debug.field("Authority Desc", &hex::Hex(&authority_desc));
         }
-        debug.field("Authority Hash", &hex::encode(&self.authority_hash));
+        debug.field("Authority Hash", &hex::Hex(&&self.authority_hash));
         debug.field("Config Desc", &self.config_desc);
         debug.finish()
     }
